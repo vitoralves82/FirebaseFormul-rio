@@ -8,6 +8,8 @@ export const projectSchema = z.object({
     name: z.string().min(2, 'O nome do destinatário é obrigatório.'),
     position: z.string().min(2, 'O cargo é obrigatório.'),
     email: z.string().email('O e-mail é inválido.'),
+    questions: z.array(z.string()).optional(),
+    status: z.enum(['pending', 'sent', 'completed']).optional(),
   })).min(1, 'Adicione pelo menos um destinatário.'),
 });
 

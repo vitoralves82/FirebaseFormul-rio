@@ -29,6 +29,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState("definition");
+  const allQuestionIds = QUESTIONS.map(q => q.id);
 
   const form = useForm<ProjectFormData>({
     resolver: zodResolver(projectSchema),
@@ -168,7 +169,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                         )}
                       </div>
                     ))}
-                    <Button type="button" variant="outline" onClick={() => append({ id: uuidv4(), name: '', position: '', email: '' })}>
+                    <Button type="button" variant="outline" onClick={() => append({ id: uuidv4(), name: '', position: '', email: '', questions: allQuestionIds, status: 'pending' })}>
                       <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Destinatário
                     </Button>
                   </div>

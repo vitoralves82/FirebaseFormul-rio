@@ -6,6 +6,7 @@ import { formCompletionNotification } from '@/ai/flows/form-completion-notificat
 import type { Project, Submission } from '@/lib/types';
 import { revalidatePath } from 'next/cache';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
+import { QUESTIONS } from '@/lib/questions';
 
 // In a real app, this would be replaced with Firebase, a SQL DB, etc.
 // This mock DB persists data across server action calls within the same server instance.
@@ -16,6 +17,7 @@ const MOCK_DB: { projects: Project[]; submissions: Record<string, Submission> } 
 
 export async function createOrUpdateProject(data: ProjectFormData, existingProjectId?: string) {
   const validatedData = projectSchema.parse(data);
+  const allQuestionIds = QUESTIONS.map(q => q.id);
 
   if (existingProjectId) {
     const projectIndex = MOCK_DB.projects.findIndex(p => p.id === existingProjectId);
@@ -27,7 +29,7 @@ export async function createOrUpdateProject(data: ProjectFormData, existingProje
       ...validatedData,
       recipients: validatedData.recipients.map(newRecipient => {
         const existingRecipient = existingProject.recipients.find(r => r.id === newRecipient.id);
-        return existingRecipient ? { ...existingRecipient, ...newRecipient } : { ...newRecipient, questions: [], status: 'pending' };
+        return existingRecipient ? { ...existingRecipient, ...newRecipient } : { ...newRecipient, questions: allQuestionIds, status: 'pending' };
       }),
     };
     revalidatePath('/');
@@ -36,7 +38,7 @@ export async function createOrUpdateProject(data: ProjectFormData, existingProje
     const newProject: Project = {
       id: uuidv4(),
       ...validatedData,
-      recipients: validatedData.recipients.map(r => ({ ...r, questions: [], status: 'pending' })),
+      recipients: validatedData.recipients.map(r => ({ ...r, questions: allQuestionIds, status: 'pending' })),
       status: 'draft',
     };
     MOCK_DB.projects.push(newProject);
