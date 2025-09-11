@@ -1,3 +1,10 @@
 {
-  "placeholderImages": []
+  "placeholderImages": [
+    {
+      "id": "hero-background",
+      "description": "An abstract image with teal and gold colors representing nature and technology.",
+      "imageUrl": "https://picsum.photos/seed/env1/1200/400",
+      "imageHint": "abstract environment"
+    }
+  ]
 }
