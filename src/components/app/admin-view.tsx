@@ -11,13 +11,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { createOrUpdateProject, projectSchema, updateProjectQuestions, markEmailsAsSent } from '@/lib/actions';
+import { createOrUpdateProject, updateProjectQuestions, markEmailsAsSent } from '@/lib/actions';
+import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import type { Project } from '@/lib/types';
-import type { ProjectFormData } from '@/lib/actions';
 import { QUESTIONS } from '@/lib/questions';
 import { PlusCircle, Trash2, Send, Mail, Loader2, CheckCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
-import { groupBy } from '@/lib/utils'; // Assuming you add this helper
+import { groupBy } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 
 interface AdminViewProps {
   project: Project | null;

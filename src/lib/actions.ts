@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { formCompletionNotification } from '@/ai/flows/form-completion-notification';
 import type { Project, Submission } from '@/lib/types';
 import { revalidatePath } from 'next/cache';
+import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 
 // In a real app, this would be replaced with Firebase, a SQL DB, etc.
 // This mock DB persists data across server action calls within the same server instance.
@@ -12,19 +13,6 @@ const MOCK_DB: { projects: Project[]; submissions: Record<string, Submission> } 
   projects: [],
   submissions: {},
 };
-
-export const projectSchema = z.object({
-  projectName: z.string().min(3, 'O nome do projeto deve ter pelo menos 3 caracteres.'),
-  clientName: z.string().min(2, 'O nome do cliente deve ter pelo menos 2 caracteres.'),
-  recipients: z.array(z.object({
-    id: z.string(),
-    name: z.string().min(2, 'O nome do destinatário é obrigatório.'),
-    position: z.string().min(2, 'O cargo é obrigatório.'),
-    email: z.string().email('O e-mail é inválido.'),
-  })).min(1, 'Adicione pelo menos um destinatário.'),
-});
-
-export type ProjectFormData = z.infer<typeof projectSchema>;
 
 export async function createOrUpdateProject(data: ProjectFormData, existingProjectId?: string) {
   const validatedData = projectSchema.parse(data);
