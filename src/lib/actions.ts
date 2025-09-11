@@ -60,18 +60,26 @@ export async function updateProjectQuestions(projectId: string, recipientId: str
   return project;
 }
 
-export async function markEmailsAsSent(projectId: string) {
+export async function markSingleEmailAsSent(projectId: string, recipientId: string) {
     const project = MOCK_DB.projects.find(p => p.id === projectId);
     if (!project) throw new Error('Project not found');
-    project.status = 'in-progress';
-    project.recipients.forEach(r => {
-        if(r.questions.length > 0) {
-            r.status = 'sent';
-        }
-    });
+
+    const recipient = project.recipients.find(r => r.id === recipientId);
+    if (!recipient) throw new Error('Recipient not found');
+
+    if (recipient.questions.length > 0) {
+        recipient.status = 'sent';
+    }
+
+    const hasSentEmails = project.recipients.some(r => r.status === 'sent' || r.status === 'completed');
+    if (hasSentEmails && project.status === 'draft') {
+        project.status = 'in-progress';
+    }
+    
     revalidatePath('/');
     return project;
 }
+
 
 export async function submitResponse(submission: Submission) {
   const project = MOCK_DB.projects.find(p => p.id === submission.projectId);

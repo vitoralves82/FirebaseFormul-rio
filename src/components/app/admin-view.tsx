@@ -11,9 +11,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { createOrUpdateProject, updateProjectQuestions, markEmailsAsSent } from '@/lib/actions';
+import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent } from '@/lib/actions';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
-import type { Project } from '@/lib/types';
+import type { Project, Recipient } from '@/lib/types';
 import { QUESTIONS } from '@/lib/questions';
 import { PlusCircle, Trash2, Send, Mail, Loader2, CheckCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
@@ -93,23 +93,29 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     });
   };
 
-  const handleSendEmails = () => {
+  const handleSendEmail = (recipient: Recipient) => {
     if (!project) return;
     startTransition(async () => {
-      const updatedProject = await markEmailsAsSent(project.id);
-      onProjectChange(updatedProject);
-      toast({
-        title: "E-mails Preparados",
-        description: "Os links para os formulários foram gerados.",
-      });
-      project.recipients.forEach(recipient => {
-        if (recipient.questions.length === 0) return;
+      try {
+        const updatedProject = await markSingleEmailAsSent(project.id, recipient.id);
+        onProjectChange(updatedProject);
         
+        toast({
+          title: `E-mail para ${recipient.name} preparado!`,
+          description: "Seu cliente de e-mail deve abrir em breve.",
+        });
+
         const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
         const body = `Olá ${recipient.name},\n\nVocê foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\nPor favor, acesse o link abaixo para responder às suas perguntas:\n${window.location.origin}?view=recipient&projectId=${project.id}&recipientId=${recipient.id}\n\nObrigado,\nEquipe EnvironPact`;
         const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         window.open(mailtoLink, '_blank');
-      });
+      } catch(e) {
+         toast({
+          title: "Erro ao enviar e-mail",
+          description: "Não foi possível marcar o e-mail como enviado.",
+          variant: "destructive",
+        });
+      }
     });
   };
 
@@ -194,7 +200,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
               {project?.recipients.map(recipient => (
                 <AccordionItem key={recipient.id} value={recipient.id}>
                   <AccordionTrigger className="hover:no-underline">
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-1 items-center gap-4">
                       <div className="flex flex-col text-left">
                         <span className="font-medium">{recipient.name}</span>
                         <span className="text-sm text-muted-foreground">{recipient.email}</span>
@@ -205,6 +211,27 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                   </AccordionTrigger>
                   <AccordionContent className="p-2">
                     <div className="space-y-4">
+                      <div className="p-4 border-b">
+                        <h4 className="font-medium mb-2 text-primary">Envio de E-mail</h4>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-sm font-medium">Status:
+                                    {recipient.status === 'pending' && <span className="ml-2 font-normal text-muted-foreground">Pendente</span>}
+                                    {recipient.status === 'sent' && <span className="ml-2 font-normal text-amber-600">Enviado</span>}
+                                    {recipient.status === 'completed' && <span className="ml-2 font-normal text-green-600">Concluído</span>}
+                                </p>
+                                <p className="text-xs text-muted-foreground">O link do formulário será aberto no seu cliente de e-mail padrão.</p>
+                            </div>
+                            <Button 
+                                size="sm" 
+                                onClick={() => handleSendEmail(recipient)}
+                                disabled={isPending || recipient.questions.length === 0 || recipient.status === 'completed'}
+                            >
+                                <Send className="mr-2 h-4 w-4"/>
+                                Enviar E-mail
+                            </Button>
+                        </div>
+                      </div>
                       {Object.entries(questionsByCategory).map(([category, questions]) => (
                         <div key={category}>
                           <h4 className="font-medium mb-2 text-primary font-headline">{category}</h4>
@@ -229,9 +256,6 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                 </AccordionItem>
               ))}
             </Accordion>
-            <Button onClick={handleSendEmails} disabled={isPending || project?.status === 'completed'}>
-              <Send className="mr-2 h-4 w-4" /> Gerar e Enviar E-mails
-            </Button>
           </CardContent>
         </Card>
       </TabsContent>
