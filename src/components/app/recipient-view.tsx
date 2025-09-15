@@ -19,9 +19,10 @@ interface RecipientViewProps {
   activeRecipientId: string | null;
   setActiveRecipientId: (id: string) => void;
   isRecipientSession?: boolean;
+  onProjectUpdated?: (project: Project) => void;
 }
 
-export default function RecipientView({ project, activeRecipientId, setActiveRecipientId, isRecipientSession }: RecipientViewProps) {
+export default function RecipientView({ project, activeRecipientId, setActiveRecipientId, isRecipientSession, onProjectUpdated }: RecipientViewProps) {
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
@@ -79,7 +80,10 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
       };
 
       try {
-        await submitResponse(submission);
+        const result = await submitResponse(submission);
+        if (result?.project && onProjectUpdated) {
+          onProjectUpdated(result.project);
+        }
         if (!isRecipientSession) {
             localStorage.removeItem(`submission_${project.id}_${activeRecipientId}`);
         }
@@ -120,7 +124,7 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
         <div className="flex justify-center">
             <div className="w-full max-w-sm">
                 <Label>Pré-visualizar como:</Label>
-                <Select value={activeRecipientId} onValueChange={setActiveRecipientId}>
+                <Select value={activeRecipientId ?? undefined} onValueChange={setActiveRecipientId}>
                     <SelectTrigger><SelectValue placeholder="Selecione um destinatário..." /></SelectTrigger>
                     <SelectContent>
                     {project.recipients.map(r => (

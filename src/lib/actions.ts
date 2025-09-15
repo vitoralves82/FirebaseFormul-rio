@@ -1,145 +1,417 @@
 'use server';
 
-import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { formCompletionNotification } from '@/ai/flows/form-completion-notification';
-import type { Project, Submission } from '@/lib/types';
 import { revalidatePath } from 'next/cache';
+import { formCompletionNotification } from '@/ai/flows/form-completion-notification';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import { QUESTIONS } from '@/lib/questions';
+import type { Answer, Project, Recipient, Submission } from '@/lib/types';
+import { supabaseRequest } from '@/lib/supabase/client';
+import type {
+  SupabaseProjectRow,
+  SupabaseRecipientRow,
+  SupabaseSubmissionRow,
+} from '@/lib/supabase/types';
 
-// In a real app, this would be replaced with Firebase, a SQL DB, etc.
-// This mock DB persists data across server action calls within the same server instance.
-const MOCK_DB: { projects: Project[]; submissions: Record<string, Submission> } = {
-  projects: [],
-  submissions: {},
-};
+const PREFER_RETURN = ['return=representation'];
+const PREFER_UPSERT = ['return=representation', 'resolution=merge-duplicates'];
+
+function sanitizeQuestions(questions: string[] | undefined, fallback: string[]): string[] {
+  if (!questions || questions.length === 0) {
+    return fallback;
+  }
+
+  const filtered = questions.filter(questionId => questionId && fallback.includes(questionId));
+  const unique = Array.from(new Set(filtered));
+
+  return unique.length > 0 ? unique : fallback;
+}
+
+function mapRecipient(row: SupabaseRecipientRow): Recipient {
+  return {
+    id: row.id,
+    name: row.name,
+    position: row.position,
+    email: row.email,
+    questions: Array.isArray(row.questions) ? row.questions : [],
+    status: row.status,
+  };
+}
+
+function mapProject(row: SupabaseProjectRow, recipients: SupabaseRecipientRow[]): Project {
+  const orderedRecipients = [...recipients]
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map(mapRecipient);
+
+  const notification = row.notification_message
+    ? {
+        message: row.notification_message,
+        isComprehensive: Boolean(row.notification_is_comprehensive),
+      }
+    : undefined;
+
+  return {
+    id: row.id,
+    projectName: row.project_name,
+    clientName: row.client_name,
+    status: row.status,
+    recipients: orderedRecipients,
+    ...(notification ? { notification } : {}),
+  };
+}
+
+async function fetchProjectRow(projectId: string): Promise<SupabaseProjectRow> {
+  const rows = await supabaseRequest<SupabaseProjectRow[]>(`projects`, {
+    searchParams: {
+      select: 'id,project_name,client_name,status,notification_message,notification_is_comprehensive',
+      id: `eq.${projectId}`,
+    },
+  });
+
+  const projectRow = rows?.[0];
+  if (!projectRow) {
+    throw new Error('Projeto não encontrado');
+  }
+
+  return projectRow;
+}
+
+async function fetchProject(projectId: string): Promise<Project> {
+  const projectRow = await fetchProjectRow(projectId);
+  const recipientRows = await supabaseRequest<SupabaseRecipientRow[]>(`recipients`, {
+    searchParams: {
+      select: 'id,project_id,name,position,email,questions,status,created_at',
+      project_id: `eq.${projectId}`,
+    },
+  });
+
+  return mapProject(projectRow, recipientRows ?? []);
+}
+
+export async function getProjectById(projectId: string): Promise<Project | null> {
+  try {
+    return await fetchProject(projectId);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Projeto não encontrado') {
+      return null;
+    }
+    throw error;
+  }
+}
 
 export async function createOrUpdateProject(data: ProjectFormData, existingProjectId?: string) {
   const validatedData = projectSchema.parse(data);
   const allQuestionIds = QUESTIONS.map(q => q.id);
 
   if (existingProjectId) {
-    const projectIndex = MOCK_DB.projects.findIndex(p => p.id === existingProjectId);
-    if (projectIndex === -1) throw new Error('Project not found');
+    const updatedProjects = await supabaseRequest<SupabaseProjectRow[]>(`projects`, {
+      method: 'PATCH',
+      searchParams: { id: `eq.${existingProjectId}` },
+      body: {
+        project_name: validatedData.projectName,
+        client_name: validatedData.clientName,
+      },
+      prefer: PREFER_RETURN,
+    });
 
-    const existingProject = MOCK_DB.projects[projectIndex];
-    MOCK_DB.projects[projectIndex] = {
-      ...existingProject,
-      ...validatedData,
-      recipients: validatedData.recipients.map(newRecipient => {
-        const existingRecipient = existingProject.recipients.find(r => r.id === newRecipient.id);
-        return existingRecipient ? { ...existingRecipient, ...newRecipient } : { ...newRecipient, questions: allQuestionIds, status: 'pending' };
-      }),
-    };
+    if (!updatedProjects || updatedProjects.length === 0) {
+      throw new Error('Projeto não encontrado');
+    }
+
+    const existingRecipientRows = await supabaseRequest<Pick<SupabaseRecipientRow, 'id' | 'status' | 'questions'>[]>(`recipients`, {
+      searchParams: {
+        select: 'id,status,questions',
+        project_id: `eq.${existingProjectId}`,
+      },
+    });
+
+    const existingRecipientMap = new Map(
+      (existingRecipientRows ?? []).map(row => [row.id, row])
+    );
+
+    const recipientsPayload = validatedData.recipients.map(recipient => {
+      const existing = existingRecipientMap.get(recipient.id);
+      const questions = sanitizeQuestions(recipient.questions ?? existing?.questions ?? undefined, allQuestionIds);
+
+      return {
+        id: recipient.id || existing?.id || uuidv4(),
+        project_id: existingProjectId,
+        name: recipient.name,
+        position: recipient.position,
+        email: recipient.email,
+        questions,
+        status: recipient.status ?? existing?.status ?? 'pending',
+      };
+    });
+
+    const incomingIds = new Set(recipientsPayload.map(r => r.id));
+    const idsToDelete = (existingRecipientRows ?? [])
+      .filter(row => !incomingIds.has(row.id))
+      .map(row => row.id);
+
+    if (idsToDelete.length > 0) {
+      const values = idsToDelete.map(id => `"${id}"`).join(',');
+      await supabaseRequest(`recipients`, {
+        method: 'DELETE',
+        searchParams: { id: `in.(${values})` },
+      });
+    }
+
+    if (recipientsPayload.length > 0) {
+      await supabaseRequest(`recipients`, {
+        method: 'POST',
+        body: recipientsPayload,
+        prefer: PREFER_UPSERT,
+      });
+    }
+
     revalidatePath('/');
-    return MOCK_DB.projects[projectIndex];
-  } else {
-    const newProject: Project = {
-      id: uuidv4(),
-      ...validatedData,
-      recipients: validatedData.recipients.map(r => ({ ...r, questions: allQuestionIds, status: 'pending' })),
-      status: 'draft',
-    };
-    MOCK_DB.projects.push(newProject);
-    revalidatePath('/');
-    return newProject;
+    return fetchProject(existingProjectId);
   }
+
+  const insertedProjects = await supabaseRequest<SupabaseProjectRow[]>(`projects`, {
+    method: 'POST',
+    body: {
+      project_name: validatedData.projectName,
+      client_name: validatedData.clientName,
+      status: 'draft',
+    },
+    prefer: PREFER_RETURN,
+  });
+
+  const projectRow = insertedProjects?.[0];
+  if (!projectRow) {
+    throw new Error('Não foi possível criar o projeto.');
+  }
+
+  const projectId = projectRow.id;
+
+  if (validatedData.recipients.length > 0) {
+    const recipientsPayload = validatedData.recipients.map(recipient => ({
+      id: recipient.id || uuidv4(),
+      project_id: projectId,
+      name: recipient.name,
+      position: recipient.position,
+      email: recipient.email,
+      questions: sanitizeQuestions(recipient.questions, allQuestionIds),
+      status: recipient.status ?? 'pending',
+    }));
+
+    await supabaseRequest(`recipients`, {
+      method: 'POST',
+      body: recipientsPayload,
+      prefer: PREFER_RETURN,
+    });
+  }
+
+  revalidatePath('/');
+  return fetchProject(projectId);
 }
 
 export async function updateProjectQuestions(projectId: string, recipientId: string, questions: string[]) {
-  const project = MOCK_DB.projects.find(p => p.id === projectId);
-  if (!project) throw new Error('Project not found');
+  const sanitized = sanitizeQuestions(questions, QUESTIONS.map(q => q.id));
 
-  const recipient = project.recipients.find(r => r.id === recipientId);
-  if (!recipient) throw new Error('Recipient not found');
+  const updatedRecipients = await supabaseRequest<SupabaseRecipientRow[]>(`recipients`, {
+    method: 'PATCH',
+    searchParams: {
+      id: `eq.${recipientId}`,
+      project_id: `eq.${projectId}`,
+    },
+    body: { questions: sanitized },
+    prefer: PREFER_RETURN,
+  });
 
-  recipient.questions = questions;
+  if (!updatedRecipients || updatedRecipients.length === 0) {
+    throw new Error('Destinatário não encontrado');
+  }
 
   revalidatePath('/');
-  return project;
+  return fetchProject(projectId);
 }
 
 export async function markSingleEmailAsSent(projectId: string, recipientId: string) {
-    const project = MOCK_DB.projects.find(p => p.id === projectId);
-    if (!project) throw new Error('Project not found');
+  const recipientRows = await supabaseRequest<Pick<SupabaseRecipientRow, 'id' | 'status' | 'questions'>[]>(`recipients`, {
+    searchParams: {
+      select: 'id,status,questions',
+      id: `eq.${recipientId}`,
+      project_id: `eq.${projectId}`,
+    },
+  });
 
-    const recipient = project.recipients.find(r => r.id === recipientId);
-    if (!recipient) throw new Error('Recipient not found');
-
-    if (recipient.questions.length > 0) {
-        recipient.status = 'sent';
-    }
-
-    const hasSentEmails = project.recipients.some(r => r.status === 'sent' || r.status === 'completed');
-    if (hasSentEmails && project.status === 'draft') {
-        project.status = 'in-progress';
-    }
-    
-    revalidatePath('/');
-    return project;
-}
-
-
-export async function submitResponse(submission: Submission) {
-  const project = MOCK_DB.projects.find(p => p.id === submission.projectId);
-  if (!project) throw new Error('Project not found');
-
-  const submissionKey = `${submission.projectId}_${submission.recipientId}`;
-  MOCK_DB.submissions[submissionKey] = submission;
-
-  const recipient = project.recipients.find(r => r.id === submission.recipientId);
-  if (recipient) {
-    recipient.status = 'completed';
+  const recipient = recipientRows?.[0];
+  if (!recipient) {
+    throw new Error('Destinatário não encontrado');
   }
 
-  const allCompleted = project.recipients.every(r => r.status === 'completed' || r.questions.length === 0);
+  if (!recipient.questions || recipient.questions.length === 0) {
+    return fetchProject(projectId);
+  }
 
-  if (allCompleted) {
-    project.status = 'completed';
-    const recipientEmails = project.recipients.map(r => r.email);
-    const responses = recipientEmails.reduce((acc, email) => {
-        const recip = project.recipients.find(r => r.email === email);
-        const sub = recip ? MOCK_DB.submissions[`${project.id}_${recip.id}`] : undefined;
-        acc[email] = sub?.answers.reduce((ansAcc, ans) => {
-            ansAcc[ans.questionId] = ans.textAnswer || ans.fileAnswer || 'Não respondido';
-            return ansAcc;
-        }, {} as Record<string, any>) || 'Nenhuma submissão';
-        return acc;
-    }, {} as Record<string, any>);
+  if (recipient.status !== 'completed') {
+    await supabaseRequest(`recipients`, {
+      method: 'PATCH',
+      searchParams: {
+        id: `eq.${recipientId}`,
+        project_id: `eq.${projectId}`,
+      },
+      body: { status: 'sent' },
+      prefer: PREFER_RETURN,
+    });
+  }
 
-    try {
-      const notification = await formCompletionNotification({
-        projectName: project.projectName,
-        clientName: project.clientName,
-        recipientEmails: recipientEmails,
-        responses: responses,
+  const recipients = await supabaseRequest<Pick<SupabaseRecipientRow, 'status' | 'questions'>[]>(`recipients`, {
+    searchParams: {
+      select: 'status,questions',
+      project_id: `eq.${projectId}`,
+    },
+  });
+
+  const hasSentEmails = (recipients ?? []).some(row => row.status === 'sent' || row.status === 'completed');
+
+  if (hasSentEmails) {
+    const projectRows = await supabaseRequest<Pick<SupabaseProjectRow, 'status'>[]>(`projects`, {
+      searchParams: {
+        select: 'status',
+        id: `eq.${projectId}`,
+      },
+    });
+
+    const projectRow = projectRows?.[0];
+    if (projectRow && projectRow.status === 'draft') {
+      await supabaseRequest(`projects`, {
+        method: 'PATCH',
+        searchParams: { id: `eq.${projectId}` },
+        body: { status: 'in-progress' },
+        prefer: PREFER_RETURN,
       });
-
-      project.notification = {
-        message: notification.notificationMessage,
-        isComprehensive: notification.isComprehensive,
-      };
-
-    } catch (error) {
-      console.error('Error generating AI notification:', error);
-      project.notification = {
-        message: 'Falha ao gerar a análise de completude das respostas.',
-        isComprehensive: false,
-      };
     }
   }
 
   revalidatePath('/');
+  return fetchProject(projectId);
+}
+
+export async function submitResponse(submission: Submission) {
+  const sanitizedAnswers: Answer[] = submission.answers.map(answer => ({
+    questionId: answer.questionId,
+    textAnswer: answer.textAnswer ?? undefined,
+    fileAnswer: answer.fileAnswer ?? undefined,
+  }));
+
+  const projectRow = await fetchProjectRow(submission.projectId);
+
+  await supabaseRequest(`submissions`, {
+    method: 'POST',
+    body: [
+      {
+        project_id: submission.projectId,
+        recipient_id: submission.recipientId,
+        answers: sanitizedAnswers,
+        submitted_at: new Date().toISOString(),
+      },
+    ],
+    prefer: PREFER_UPSERT,
+  });
+
+  await supabaseRequest(`recipients`, {
+    method: 'PATCH',
+    searchParams: {
+      id: `eq.${submission.recipientId}`,
+      project_id: `eq.${submission.projectId}`,
+    },
+    body: { status: 'completed' },
+    prefer: PREFER_RETURN,
+  });
+
+  const recipientRows = await supabaseRequest<Pick<SupabaseRecipientRow, 'id' | 'email' | 'status' | 'questions'>[]>(`recipients`, {
+    searchParams: {
+      select: 'id,email,status,questions',
+      project_id: `eq.${submission.projectId}`,
+    },
+  });
+
+  const allCompleted = (recipientRows ?? []).every(row => {
+    const hasQuestions = row.questions && row.questions.length > 0;
+    return row.status === 'completed' || !hasQuestions;
+  });
+
+  const projectUpdates: Record<string, unknown> = {};
+
+  if (allCompleted) {
+    const submissionRows = await supabaseRequest<Pick<SupabaseSubmissionRow, 'recipient_id' | 'answers'>[]>(`submissions`, {
+      searchParams: {
+        select: 'recipient_id,answers',
+        project_id: `eq.${submission.projectId}`,
+      },
+    });
+
+    const responses = (recipientRows ?? []).reduce((acc, recipient) => {
+      const submissionRow = submissionRows.find(row => row.recipient_id === recipient.id);
+      if (submissionRow?.answers) {
+        acc[recipient.email] = submissionRow.answers.reduce((answersAcc, answer) => {
+          answersAcc[answer.questionId] = answer.textAnswer ?? answer.fileAnswer ?? 'Não respondido';
+          return answersAcc;
+        }, {} as Record<string, unknown>);
+      } else {
+        acc[recipient.email] = 'Nenhuma submissão';
+      }
+      return acc;
+    }, {} as Record<string, unknown>);
+
+    try {
+      const notification = await formCompletionNotification({
+        projectName: projectRow.project_name,
+        clientName: projectRow.client_name,
+        recipientEmails: (recipientRows ?? []).map(row => row.email),
+        responses,
+      });
+
+      projectUpdates.status = 'completed';
+      projectUpdates.notification_message = notification.notificationMessage;
+      projectUpdates.notification_is_comprehensive = notification.isComprehensive;
+    } catch (error) {
+      console.error('Erro ao gerar a notificação de IA:', error);
+      projectUpdates.status = 'completed';
+      projectUpdates.notification_message = 'Falha ao gerar a análise de completude das respostas.';
+      projectUpdates.notification_is_comprehensive = false;
+    }
+  } else if (projectRow.status === 'draft') {
+    projectUpdates.status = 'in-progress';
+  }
+
+  if (Object.keys(projectUpdates).length > 0) {
+    await supabaseRequest(`projects`, {
+      method: 'PATCH',
+      searchParams: { id: `eq.${submission.projectId}` },
+      body: projectUpdates,
+      prefer: PREFER_RETURN,
+    });
+  }
+
+  revalidatePath('/');
+  const project = await fetchProject(submission.projectId);
   return { success: true, project };
 }
 
 export async function getSubmissions(projectId: string): Promise<Record<string, Submission>> {
-  const projectSubmissions: Record<string, Submission> = {};
-  for (const key in MOCK_DB.submissions) {
-    if (key.startsWith(`${projectId}_`)) {
-      projectSubmissions[key] = MOCK_DB.submissions[key];
-    }
+  const submissionRows = await supabaseRequest<SupabaseSubmissionRow[]>(`submissions`, {
+    searchParams: {
+      select: 'project_id,recipient_id,answers,submitted_at',
+      project_id: `eq.${projectId}`,
+    },
+  });
+
+  const submissions: Record<string, Submission> = {};
+
+  for (const row of submissionRows ?? []) {
+    const key = `${row.project_id}_${row.recipient_id}`;
+    submissions[key] = {
+      projectId: row.project_id,
+      recipientId: row.recipient_id,
+      answers: Array.isArray(row.answers) ? row.answers : [],
+      submittedAt: row.submitted_at,
+    };
   }
-  return projectSubmissions;
+
+  return submissions;
 }

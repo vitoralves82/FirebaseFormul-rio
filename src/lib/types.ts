@@ -35,4 +35,5 @@ export interface Submission {
   projectId: string;
   recipientId: string;
   answers: Answer[];
+  submittedAt?: string;
 }

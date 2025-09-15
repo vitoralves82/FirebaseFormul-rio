@@ -6,6 +6,7 @@ import AdminView from "@/components/app/admin-view";
 import RecipientView from "@/components/app/recipient-view";
 import type { Project } from "@/lib/types";
 import { AppHeader } from "@/components/app/header";
+import { getProjectById } from '@/lib/actions';
 
 export type ViewMode = "admin" | "recipient";
 
@@ -31,17 +32,69 @@ function HomePageContent() {
 
   const handleProjectChange = (newProject: Project) => {
     setProject(newProject);
-    
-    // If accessed via URL, the recipient is fixed. Otherwise, manage it for admin preview.
+
     if (!isRecipientSession) {
-      if (!activeRecipientId && newProject.recipients.length > 0) {
-        setActiveRecipientId(newProject.recipients[0].id);
-      }
-      if (activeRecipientId && !newProject.recipients.find(r => r.id === activeRecipientId)) {
-        setActiveRecipientId(newProject.recipients[0]?.id || null);
-      }
+      setActiveRecipientId(current => {
+        if (!current) {
+          return newProject.recipients[0]?.id ?? null;
+        }
+
+        const exists = newProject.recipients.some(recipient => recipient.id === current);
+        return exists ? current : newProject.recipients[0]?.id ?? null;
+      });
     }
   };
+
+  useEffect(() => {
+    if (!projectIdFromUrl) {
+      return;
+    }
+
+    let isActive = true;
+
+    (async () => {
+      try {
+        const fetchedProject = await getProjectById(projectIdFromUrl);
+        if (!isActive) return;
+
+        if (!fetchedProject) {
+          setProject(null);
+          setActiveRecipientId(null);
+          return;
+        }
+
+        setProject(fetchedProject);
+        setActiveRecipientId(current => {
+          if (recipientIdFromUrl) {
+            const exists = fetchedProject.recipients.some(recipient => recipient.id === recipientIdFromUrl);
+            return exists ? recipientIdFromUrl : null;
+          }
+
+          if (isRecipientSession) {
+            if (current && fetchedProject.recipients.some(recipient => recipient.id === current)) {
+              return current;
+            }
+            return fetchedProject.recipients[0]?.id ?? null;
+          }
+
+          if (current && fetchedProject.recipients.some(recipient => recipient.id === current)) {
+            return current;
+          }
+
+          return fetchedProject.recipients[0]?.id ?? null;
+        });
+      } catch (error) {
+        if (!isActive) return;
+        console.error('Erro ao carregar o projeto:', error);
+        setProject(null);
+        setActiveRecipientId(null);
+      }
+    })();
+
+    return () => {
+      isActive = false;
+    };
+  }, [projectIdFromUrl, recipientIdFromUrl, isRecipientSession]);
 
   const handleViewChange = (newView: ViewMode) => {
     // Prevent switching to admin view if in a recipient session
@@ -72,6 +125,7 @@ function HomePageContent() {
             activeRecipientId={activeRecipientId}
             setActiveRecipientId={setActiveRecipientId}
             isRecipientSession={isRecipientSession}
+            onProjectUpdated={handleProjectChange}
           />
         ) : (
           <div className="flex flex-col items-center justify-center text-center py-20">
