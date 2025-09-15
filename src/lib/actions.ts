@@ -133,3 +133,13 @@ export async function submitResponse(submission: Submission) {
   revalidatePath('/');
   return { success: true, project };
 }
+
+export async function getSubmissions(projectId: string): Promise<Record<string, Submission>> {
+  const projectSubmissions: Record<string, Submission> = {};
+  for (const key in MOCK_DB.submissions) {
+    if (key.startsWith(`${projectId}_`)) {
+      projectSubmissions[key] = MOCK_DB.submissions[key];
+    }
+  }
+  return projectSubmissions;
+}

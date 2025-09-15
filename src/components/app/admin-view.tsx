@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,11 +11,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent } from '@/lib/actions';
+import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent, getSubmissions } from '@/lib/actions';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
-import type { Project, Recipient } from '@/lib/types';
+import type { Project, Recipient, Submission, Answer } from '@/lib/types';
 import { QUESTIONS } from '@/lib/questions';
-import { PlusCircle, Trash2, Send, Mail, Loader2, CheckCircle } from 'lucide-react';
+import { PlusCircle, Trash2, Send, Mail, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { groupBy } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +29,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState("definition");
+  const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
   const allQuestionIds = QUESTIONS.map(q => q.id);
 
   const form = useForm<ProjectFormData>({
@@ -48,6 +49,15 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     control: form.control,
     name: "recipients",
   });
+  
+  useEffect(() => {
+    if (activeTab === 'responses' && project) {
+      startTransition(async () => {
+        const fetchedSubmissions = await getSubmissions(project.id);
+        setSubmissions(fetchedSubmissions);
+      });
+    }
+  }, [activeTab, project]);
 
   const onSubmit = (data: ProjectFormData) => {
     startTransition(async () => {
@@ -119,13 +129,20 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     });
   };
 
+  const getAnswerForQuestion = (recipientId: string, questionId: string): Answer | undefined => {
+    if (!project) return undefined;
+    const submission = submissions[`${project.id}_${recipientId}`];
+    return submission?.answers.find(a => a.questionId === questionId);
+  };
+
   const questionsByCategory = groupBy(QUESTIONS, 'category');
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full max-w-4xl mx-auto">
-      <TabsList className="grid w-full grid-cols-2">
+      <TabsList className="grid w-full grid-cols-3">
         <TabsTrigger value="definition">1. Definição</TabsTrigger>
         <TabsTrigger value="questions" disabled={!project}>2. Perguntas e Envio</TabsTrigger>
+        <TabsTrigger value="responses" disabled={!project}>3. Consulta de Respostas</TabsTrigger>
       </TabsList>
       <TabsContent value="definition">
         <Card>
@@ -257,6 +274,58 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
               ))}
             </Accordion>
           </CardContent>
+        </Card>
+      </TabsContent>
+       <TabsContent value="responses">
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-headline">Consulta de Respostas</CardTitle>
+            <CardDescription>Visualize as perguntas e respostas de cada destinatário.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {isPending && <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
+            {!isPending && (
+                <Accordion type="multiple" className="w-full">
+                {project?.recipients.map(recipient => (
+                    <AccordionItem key={recipient.id} value={recipient.id}>
+                    <AccordionTrigger className="hover:no-underline">
+                        <div className="flex flex-1 items-center gap-4">
+                        <div className="flex flex-col text-left">
+                            <span className="font-medium">{recipient.name}</span>
+                            <span className="text-sm text-muted-foreground">{recipient.email}</span>
+                        </div>
+                        {recipient.status === 'pending' && <Badge variant="outline"><AlertCircle className="mr-2 h-3.5 w-3.5" />Pendente</Badge>}
+                        {recipient.status === 'sent' && <Badge variant="outline" className="text-amber-600 border-amber-300"><Mail className="mr-2 h-3.5 w-3.5" />Enviado</Badge>}
+                        {recipient.status === 'completed' && <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200"><CheckCircle className="mr-2 h-3.5 w-3.5" />Concluído</Badge>}
+                        </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="p-2">
+                        <div className="space-y-4 pt-4">
+                        {recipient.questions.length > 0 ? (
+                           QUESTIONS.filter(q => recipient.questions.includes(q.id))
+                           .map(question => {
+                                const answer = getAnswerForQuestion(recipient.id, question.id);
+                                return (
+                                    <div key={question.id} className="grid gap-2 text-sm">
+                                        <p className="font-medium text-primary">{question.text}</p>
+                                        {answer ? (
+                                            <p className="p-3 bg-muted rounded-md text-muted-foreground">{answer.textAnswer || answer.fileAnswer || 'Não respondido'}</p>
+                                        ) : (
+                                            <p className="p-3 bg-yellow-50 text-yellow-700 rounded-md">Pendente</p>
+                                        )}
+                                    </div>
+                                )
+                           })
+                        ) : (
+                            <p className="text-muted-foreground text-sm">Nenhuma pergunta atribuída a este destinatário.</p>
+                        )}
+                        </div>
+                    </AccordionContent>
+                    </AccordionItem>
+                ))}
+                </Accordion>
+            )}
+            </CardContent>
         </Card>
       </TabsContent>
     </Tabs>
