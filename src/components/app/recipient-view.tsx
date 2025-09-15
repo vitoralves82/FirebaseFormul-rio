@@ -18,9 +18,10 @@ interface RecipientViewProps {
   project: Project;
   activeRecipientId: string | null;
   setActiveRecipientId: (id: string) => void;
+  isRecipientSession?: boolean;
 }
 
-export default function RecipientView({ project, activeRecipientId, setActiveRecipientId }: RecipientViewProps) {
+export default function RecipientView({ project, activeRecipientId, setActiveRecipientId, isRecipientSession }: RecipientViewProps) {
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
@@ -33,21 +34,27 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
   useEffect(() => {
     if (!activeRecipientId) return;
     
-    const saved = localStorage.getItem(`submission_${project.id}_${activeRecipientId}`);
-    if (saved) {
-      setAnswers(JSON.parse(saved));
+    // Do not load from localStorage if it's a real recipient session from a link
+    if (!isRecipientSession) {
+      const saved = localStorage.getItem(`submission_${project.id}_${activeRecipientId}`);
+      if (saved) {
+        setAnswers(JSON.parse(saved));
+      } else {
+        setAnswers({});
+      }
     } else {
       setAnswers({});
     }
 
     setIsSubmitted(activeRecipient?.status === 'completed');
-  }, [activeRecipientId, project.id, activeRecipient?.status]);
+  }, [activeRecipientId, project.id, activeRecipient?.status, isRecipientSession]);
 
   useEffect(() => {
-    if (Object.keys(answers).length > 0 && !isSubmitted) {
+    // Do not save to localStorage if it's a real recipient session
+    if (Object.keys(answers).length > 0 && !isSubmitted && !isRecipientSession) {
       localStorage.setItem(`submission_${project.id}_${activeRecipientId}`, JSON.stringify(answers));
     }
-  }, [answers, project.id, activeRecipientId, isSubmitted]);
+  }, [answers, project.id, activeRecipientId, isSubmitted, isRecipientSession]);
 
   const handleAnswerChange = (questionId: string, value: string | File) => {
     setAnswers(prev => ({
@@ -73,7 +80,9 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
 
       try {
         await submitResponse(submission);
-        localStorage.removeItem(`submission_${project.id}_${activeRecipientId}`);
+        if (!isRecipientSession) {
+            localStorage.removeItem(`submission_${project.id}_${activeRecipientId}`);
+        }
         setIsSubmitted(true);
         toast({
           title: "Formulário Enviado!",
@@ -107,24 +116,28 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-center">
-        <div className="w-full max-w-sm">
-            <Label>Pré-visualizar como:</Label>
-            <Select value={activeRecipientId} onValueChange={setActiveRecipientId}>
-                <SelectTrigger><SelectValue placeholder="Selecione um destinatário..." /></SelectTrigger>
-                <SelectContent>
-                {project.recipients.map(r => (
-                    <SelectItem key={r.id} value={r.id}>{r.name} - {r.email}</SelectItem>
-                ))}
-                </SelectContent>
-            </Select>
+      {!isRecipientSession && (
+        <div className="flex justify-center">
+            <div className="w-full max-w-sm">
+                <Label>Pré-visualizar como:</Label>
+                <Select value={activeRecipientId} onValueChange={setActiveRecipientId}>
+                    <SelectTrigger><SelectValue placeholder="Selecione um destinatário..." /></SelectTrigger>
+                    <SelectContent>
+                    {project.recipients.map(r => (
+                        <SelectItem key={r.id} value={r.id}>{r.name} - {r.email}</SelectItem>
+                    ))}
+                    </SelectContent>
+                </Select>
+            </div>
         </div>
-      </div>
+      )}
 
       <Card className="w-full max-w-3xl mx-auto">
         <CardHeader>
           <CardTitle className="font-headline text-2xl">Formulário: {project.projectName}</CardTitle>
-          <CardDescription>Cliente: {project.clientName}. Responda às perguntas abaixo.</CardDescription>
+          <CardDescription>
+            {isRecipientSession ? `Olá, ${activeRecipient.name}. Por favor, responda às perguntas abaixo.` : `Cliente: ${project.clientName}. Responda às perguntas abaixo.`}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {Object.entries(questionsByCategory).map(([category, questions]) => (

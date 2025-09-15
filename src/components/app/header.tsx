@@ -13,9 +13,10 @@ interface AppHeaderProps {
   onViewChange: (view: ViewMode) => void;
   projectStatus?: Project['status'];
   notification?: Project['notification'];
+  isRecipientSession?: boolean;
 }
 
-export function AppHeader({ view, onViewChange, projectStatus, notification }: AppHeaderProps) {
+export function AppHeader({ view, onViewChange, projectStatus, notification, isRecipientSession }: AppHeaderProps) {
   const showNotification = projectStatus === 'completed' && notification;
 
   return (
@@ -66,26 +67,28 @@ export function AppHeader({ view, onViewChange, projectStatus, notification }: A
             </Popover>
           )}
 
-          <div className="flex items-center rounded-md bg-secondary p-1">
-            <Button
-              variant={view === "admin" ? "ghost" : "ghost"}
-              size="sm"
-              onClick={() => onViewChange("admin")}
-              className={`h-8 px-3 ${view === 'admin' ? 'bg-background shadow-sm' : ''}`}
-            >
-              <ShieldCheck className="mr-2 h-4 w-4" />
-              Administrador
-            </Button>
-            <Button
-              variant={view === "recipient" ? "ghost" : "ghost"}
-              size="sm"
-              onClick={() => onViewChange("recipient")}
-              className={`h-8 px-3 ${view === 'recipient' ? 'bg-background shadow-sm' : ''}`}
-            >
-              <User className="mr-2 h-4 w-4" />
-              Destinatário
-            </Button>
-          </div>
+          {!isRecipientSession && (
+            <div className="flex items-center rounded-md bg-secondary p-1">
+              <Button
+                variant={view === "admin" ? "ghost" : "ghost"}
+                size="sm"
+                onClick={() => onViewChange("admin")}
+                className={`h-8 px-3 ${view === 'admin' ? 'bg-background shadow-sm' : ''}`}
+              >
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                Administrador
+              </Button>
+              <Button
+                variant={view === "recipient" ? "ghost" : "ghost"}
+                size="sm"
+                onClick={() => onViewChange("recipient")}
+                className={`h-8 px-3 ${view === 'recipient' ? 'bg-background shadow-sm' : ''}`}
+              >
+                <User className="mr-2 h-4 w-4" />
+                Destinatário
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </header>
