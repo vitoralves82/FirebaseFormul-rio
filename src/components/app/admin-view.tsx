@@ -249,25 +249,33 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                             </Button>
                         </div>
                       </div>
-                      {Object.entries(questionsByCategory).map(([category, questions]) => (
-                        <div key={category}>
-                          <h4 className="font-medium mb-2 text-primary font-headline">{category}</h4>
-                          <div className="space-y-2 pl-2">
-                            {questions.map(question => (
-                              <div key={question.id} className="flex items-center gap-2">
-                                <Checkbox
-                                  id={`${recipient.id}-${question.id}`}
-                                  checked={recipient.questions.includes(question.id)}
-                                  onCheckedChange={(checked) => handleQuestionChange(recipient.id, question.id, !!checked)}
-                                />
-                                <label htmlFor={`${recipient.id}-${question.id}`} className="text-sm text-muted-foreground cursor-pointer">
-                                  {question.text}
-                                </label>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+                      
+                      <Accordion type="multiple" className="w-full" defaultValue={Object.keys(questionsByCategory)}>
+                          {Object.entries(questionsByCategory).map(([category, questions]) => (
+                              <AccordionItem key={category} value={category}>
+                                  <AccordionTrigger className="text-base font-medium text-primary hover:no-underline font-headline">
+                                      {category}
+                                  </AccordionTrigger>
+                                  <AccordionContent className="p-2">
+                                      <div className="space-y-3 pl-2">
+                                          {questions.map(question => (
+                                              <div key={question.id} className="flex items-start gap-3">
+                                                  <Checkbox
+                                                      id={`${recipient.id}-${question.id}`}
+                                                      checked={recipient.questions.includes(question.id)}
+                                                      onCheckedChange={(checked) => handleQuestionChange(recipient.id, question.id, !!checked)}
+                                                      className="mt-1"
+                                                  />
+                                                  <label htmlFor={`${recipient.id}-${question.id}`} className="text-sm text-muted-foreground cursor-pointer">
+                                                      <span className="font-bold text-foreground">{question.id}</span> - {question.text}
+                                                  </label>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </AccordionContent>
+                              </AccordionItem>
+                          ))}
+                      </Accordion>
                     </div>
                   </AccordionContent>
                 </AccordionItem>
