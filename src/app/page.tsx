@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useSearchParams } from 'next/navigation';
 import AdminView from "@/components/app/admin-view";
 import RecipientView from "@/components/app/recipient-view";
@@ -13,7 +13,7 @@ function HomePageContent() {
   const searchParams = useSearchParams();
   const initialView = searchParams.get('view') as ViewMode | null;
   const projectIdFromUrl = searchParams.get('projectId');
-  const recipientIdFromUrl = searchParams.get('recipientId');
+  const recipientIdFromUrl = search_params.get('recipientId');
 
   const [view, setView] = useState<ViewMode>(initialView === 'recipient' ? 'recipient' : 'admin');
   const [project, setProject] = useState<Project | null>(null);
