@@ -13,14 +13,14 @@ function HomePageContent() {
   const searchParams = useSearchParams();
   const initialView = searchParams.get('view') as ViewMode | null;
   const projectIdFromUrl = searchParams.get('projectId');
-  const recipientIdFromUrl = search_params.get('recipientId');
+  const recipientIdFromUrl = searchParams.get('recipientId');
 
   const [view, setView] = useState<ViewMode>(initialView === 'recipient' ? 'recipient' : 'admin');
   const [project, setProject] = useState<Project | null>(null);
   const [activeRecipientId, setActiveRecipientId] = useState<string | null>(recipientIdFromUrl);
 
   // isRecipientSession is true if the user accessed the page with a recipient link
-  const isRecipientSession = initialView === 'recipient' && !!projectIdFromUrl && !!recipientIdFromUrl;
+  const isRecipientSession = initialView === 'recipient' && !!projectIdFromUrl && !!recipientIdFromurl;
 
   // This effect is a placeholder for fetching project data based on URL.
   // In a real app, you would fetch the project from a database using `projectIdFromUrl`.
