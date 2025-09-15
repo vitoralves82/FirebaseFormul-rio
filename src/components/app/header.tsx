@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ShieldCheck, User, Bell, CheckCircle, AlertTriangle } from "lucide-react";
 import type { ViewMode } from "@/app/page";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { Project } from "@/lib/types";
+import type { Project } from "@/types";
 import { Badge } from "@/components/ui/badge";
 
 interface AppHeaderProps {
@@ -17,7 +17,7 @@ interface AppHeaderProps {
 }
 
 export function AppHeader({ view, onViewChange, projectStatus, notification, isRecipientSession }: AppHeaderProps) {
-  const showNotification = projectStatus === 'completed' && notification;
+  const showNotification = projectStatus === 'concluido' && notification;
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-card shadow-sm">
