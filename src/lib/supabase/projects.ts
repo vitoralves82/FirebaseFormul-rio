@@ -81,7 +81,7 @@ export const mapProjectRow = (row: ProjectRow): Project => ({
 });
 
 export async function fetchProjectWithRecipients(projectId: string): Promise<Project | null> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   const { data, error } = await supabase
     .from("projects")
@@ -103,7 +103,7 @@ export async function fetchProjectWithRecipients(projectId: string): Promise<Pro
 }
 
 export async function fetchRecipientsByProjectId(projectId: string): Promise<RecipientRow[]> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   const { data, error } = await supabase
     .from("recipients")
@@ -118,7 +118,7 @@ export async function fetchRecipientsByProjectId(projectId: string): Promise<Rec
 }
 
 export async function fetchRecipientById(projectId: string, recipientId: string): Promise<RecipientRow | null> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   const { data, error } = await supabase
     .from("recipients")
@@ -135,7 +135,7 @@ export async function fetchRecipientById(projectId: string, recipientId: string)
 }
 
 export async function fetchSubmissionsByProjectId(projectId: string): Promise<SubmissionRow[]> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   const { data, error } = await supabase
     .from("submissions")

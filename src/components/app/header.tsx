@@ -3,10 +3,9 @@
 import { Logo } from "@/components/icons/logo";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, User, Bell, CheckCircle, AlertTriangle } from "lucide-react";
-import type { ViewMode } from "@/app/page";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { Project } from "@/types";
 import { Badge } from "@/components/ui/badge";
+import type { Project, ViewMode } from "@/types";
 
 interface AppHeaderProps {
   view: ViewMode;

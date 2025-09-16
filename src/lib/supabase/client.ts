@@ -1,16 +1,4 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { createBrowserClient } from "@supabase/ssr";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-export const createClient = () =>
-  createBrowserClient(
-    supabaseUrl!,
-    supabaseKey!,
-  );
-
-let browserClient: SupabaseClient | null = null;
+import { createClient, type SupabaseClient } from "./rest-client";
 
 const getPublicSupabaseConfig = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -27,11 +15,23 @@ const getPublicSupabaseConfig = () => {
   return { supabaseUrl, supabaseAnonKey };
 };
 
-export const supabaseBrowser = (): SupabaseClient => {
-  if (!browserClient) {
-    const { supabaseUrl, supabaseAnonKey } = getPublicSupabaseConfig();
+export const createBrowserSupabaseClient = (): SupabaseClient => {
+  const { supabaseUrl, supabaseAnonKey } = getPublicSupabaseConfig();
 
-    browserClient = createClient(supabaseUrl, supabaseAnonKey);
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+  });
+};
+
+let browserClient: SupabaseClient | null = null;
+
+export const getBrowserSupabaseClient = (): SupabaseClient => {
+  if (!browserClient) {
+    browserClient = createBrowserSupabaseClient();
   }
 
   return browserClient;

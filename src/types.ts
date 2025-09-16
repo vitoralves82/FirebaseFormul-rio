@@ -14,6 +14,8 @@ export type RecipientStatus = 'pendente' | 'enviado' | 'concluido';
 
 export type ProjectStatus = 'rascunho' | 'em_andamento' | 'concluido';
 
+export type ViewMode = 'admin' | 'recipient';
+
 export interface Recipient {
   id: string;
   name: string;

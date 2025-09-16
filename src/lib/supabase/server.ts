@@ -1,53 +1,53 @@
-// utils/supabase/server.ts
-import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
-// opcional: force server-only
-// import "server-only";
+import "server-only";
 
-// Tipar seu schema se tiver: type Database = ...;
+import { createClient, type SupabaseClient } from "./rest-client";
 
-const getPublicConfig = () => {
+const getSupabaseUrl = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  if (!url) {
+    throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_URL");
+  }
+
+  return url;
+};
+
+const getAnonKey = () => {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url) throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_URL");
-  if (!anonKey) throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  return { url, anonKey };
+
+  if (!anonKey) {
+    throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
+
+  return anonKey;
 };
 
-const getServiceConfig = () => {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const getServiceRoleKey = () => {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_URL");
-  if (!serviceRoleKey) throw new Error("Missing env: SUPABASE_SERVICE_ROLE_KEY");
-  return { url, serviceRoleKey };
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing env: SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return serviceRoleKey;
 };
 
-// Cliente para SSR/RSC, usando cookies do Next
-export const createSSRClient = (cookieStore: ReturnType<typeof cookies>) => {
-  const { url, anonKey } = getPublicConfig();
-  return createServerClient(/* <Database> */ url, anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        } catch {
-          // Chamado em Server Component (não pode setar cookie aqui). Use middleware p/ refresh de sessão.
-        }
-      },
+const createServerClient = (supabaseKey: string): SupabaseClient => {
+  const supabaseUrl = getSupabaseUrl();
+
+  return createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
     },
   });
 };
 
-// Cliente admin (service role) — use SOMENTE no backend (server actions, route handlers, jobs)
-export const supabaseAdmin = (): SupabaseClient /* <Database> */ => {
-  const { url, serviceRoleKey } = getServiceConfig();
-  return createSupabaseClient(url, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
+export const supabaseServer = async (): Promise<SupabaseClient> => {
+  return createServerClient(getAnonKey());
+};
+
+export const supabaseAdmin = (): SupabaseClient => {
+  return createServerClient(getServiceRoleKey());
 };
