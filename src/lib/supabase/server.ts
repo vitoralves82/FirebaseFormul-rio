@@ -44,6 +44,11 @@ export const createSSRClient = (cookieStore: ReturnType<typeof cookies>) => {
   });
 };
 
+export const supabaseServer = () => {
+  const cookieStore = cookies();
+  return createSSRClient(cookieStore);
+};
+
 // Cliente admin (service role) — use SOMENTE no backend (server actions, route handlers, jobs)
 export const supabaseAdmin = (): SupabaseClient /* <Database> */ => {
   const { url, serviceRoleKey } = getServiceConfig();
