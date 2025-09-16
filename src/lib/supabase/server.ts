@@ -2,6 +2,7 @@
 import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import type { ReadonlyRequestCookies } from "next/headers";
 // opcional: force server-only
 // import "server-only";
 
@@ -23,15 +24,31 @@ const getServiceConfig = () => {
   return { url, serviceRoleKey };
 };
 
+type SupabaseCookieToSet = {
+  name: string;
+  value: string;
+  options?: {
+    domain?: string;
+    maxAge?: number;
+    expires?: string | number | Date;
+    path?: string;
+    sameSite?: "lax" | "strict" | "none";
+    secure?: boolean;
+    httpOnly?: boolean;
+  };
+};
+
+type SupabaseCookiesToSet = ReadonlyArray<SupabaseCookieToSet>;
+
 // Cliente para SSR/RSC, usando cookies do Next
-export const createSSRClient = (cookieStore: ReturnType<typeof cookies>) => {
+export const createSSRClient = (cookieStore: ReadonlyRequestCookies) => {
   const { url, anonKey } = getPublicConfig();
   return createServerClient(/* <Database> */ url, anonKey, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet: SupabaseCookiesToSet) {
         try {
           cookiesToSet.forEach(({ name, value, options }) =>
             cookieStore.set(name, value, options)
@@ -44,8 +61,8 @@ export const createSSRClient = (cookieStore: ReturnType<typeof cookies>) => {
   });
 };
 
-export const supabaseServer = () => {
-  const cookieStore = cookies();
+export const supabaseServer = async () => {
+  const cookieStore = await cookies();
   return createSSRClient(cookieStore);
 };
 
