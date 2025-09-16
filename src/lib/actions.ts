@@ -55,7 +55,7 @@ const normalizeAnswerArray = (value: unknown): Answer[] => {
 const toJsonArray = (value: unknown): JsonArray => normalizeAnswerArray(value) as JsonArray;
 
 export async function createOrUpdateProject(data: ProjectFormData, existingProjectId?: string): Promise<Project> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
   const validatedData = projectSchema.parse(data);
   const allQuestionIds = QUESTIONS.map(q => q.id);
 
@@ -184,7 +184,7 @@ export async function createOrUpdateProject(data: ProjectFormData, existingProje
 }
 
 export async function updateProjectQuestions(projectId: string, recipientId: string, questions: string[]): Promise<Project> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
   const sanitizedQuestions = sanitizeQuestions(questions);
 
   try {
@@ -212,7 +212,7 @@ export async function updateProjectQuestions(projectId: string, recipientId: str
 }
 
 export async function markSingleEmailAsSent(projectId: string, recipientId: string): Promise<Project> {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   try {
     const recipient = await fetchRecipientById(projectId, recipientId);
@@ -266,7 +266,7 @@ export async function markSingleEmailAsSent(projectId: string, recipientId: stri
 }
 
 export async function submitResponse(submission: Submission) {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   try {
     const { data: existingSubmission, error: fetchSubmissionError } = await supabase
