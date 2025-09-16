@@ -1,149 +1,414 @@
 'use server';
 
-import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
-import { formCompletionNotification } from '@/ai/flows/form-completion-notification';
-import type { Project, Submission } from '@/types';
-import type { Answer } from '@/lib/types';
 import { revalidatePath } from 'next/cache';
+import { formCompletionNotification } from '@/ai/flows/form-completion-notification';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import { QUESTIONS } from '@/lib/questions';
+import { supabaseServer } from '@/lib/supabase/server';
+import {
+  fetchProjectWithRecipients,
+  fetchRecipientById,
+  fetchRecipientsByProjectId,
+  fetchSubmissionsByProjectId,
+  sanitizeQuestions,
+} from '@/lib/supabase/projects';
+import type { Project, Submission } from '@/types';
+import type { Answer } from '@/lib/types';
+import type { JsonArray } from '@/types';
 
-// In a real app, this would be replaced with Firebase, a SQL DB, etc.
-// This mock DB persists data across server action calls within the same server instance.
-const MOCK_DB: { projects: Project[]; submissions: Record<string, Submission> } = {
-  projects: [],
-  submissions: {},
+const normalizeAnswerArray = (value: unknown): Answer[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const answers: Answer[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const questionId = typeof record.questionId === 'string' ? record.questionId : undefined;
+    if (!questionId) {
+      continue;
+    }
+
+    const answer: Answer = {
+      questionId,
+    };
+
+    if (typeof record.textAnswer === 'string') {
+      answer.textAnswer = record.textAnswer;
+    }
+
+    if (typeof record.fileAnswer === 'string') {
+      answer.fileAnswer = record.fileAnswer;
+    }
+
+    answers.push(answer);
+  }
+
+  return answers;
 };
 
-export async function createOrUpdateProject(data: ProjectFormData, existingProjectId?: string) {
+const toJsonArray = (value: unknown): JsonArray => normalizeAnswerArray(value) as JsonArray;
+
+export async function createOrUpdateProject(data: ProjectFormData, existingProjectId?: string): Promise<Project> {
+  const supabase = supabaseServer();
   const validatedData = projectSchema.parse(data);
   const allQuestionIds = QUESTIONS.map(q => q.id);
 
-  if (existingProjectId) {
-    const projectIndex = MOCK_DB.projects.findIndex(p => p.id === existingProjectId);
-    if (projectIndex === -1) throw new Error('Project not found');
+  try {
+    if (existingProjectId) {
+      const existingRecipients = await fetchRecipientsByProjectId(existingProjectId);
 
-    const existingProject = MOCK_DB.projects[projectIndex];
-    MOCK_DB.projects[projectIndex] = {
-      ...existingProject,
-      ...validatedData,
-      recipients: validatedData.recipients.map(newRecipient => {
-        const existingRecipient = existingProject.recipients.find(r => r.id === newRecipient.id);
-        return existingRecipient
-          ? { ...existingRecipient, ...newRecipient }
-          : { ...newRecipient, questions: allQuestionIds, status: 'pendente' };
-      }),
-    };
+      const { error: updateProjectError } = await supabase
+        .from('projects')
+        .update({
+          project_name: validatedData.projectName,
+          client_name: validatedData.clientName,
+        })
+        .eq('id', existingProjectId);
+
+      if (updateProjectError) {
+        throw new Error(updateProjectError.message);
+      }
+
+      const recipientPayload = validatedData.recipients.map(recipient => {
+        const existingRecipient = existingRecipients.find(r => r.id === recipient.id);
+        const existingQuestions = existingRecipient ? sanitizeQuestions(existingRecipient.questions) : [];
+        const providedQuestions = Array.isArray(recipient.questions) ? sanitizeQuestions(recipient.questions) : [];
+        const questions = providedQuestions.length > 0
+          ? providedQuestions
+          : existingQuestions.length > 0
+            ? existingQuestions
+            : allQuestionIds;
+        const status = existingRecipient?.status ?? recipient.status ?? 'pendente';
+
+        return {
+          id: recipient.id,
+          project_id: existingProjectId,
+          name: recipient.name,
+          position: recipient.position,
+          email: recipient.email,
+          status,
+          questions,
+        };
+      });
+
+      if (recipientPayload.length > 0) {
+        const { error: upsertRecipientsError } = await supabase
+          .from('recipients')
+          .upsert(recipientPayload, { onConflict: 'id' });
+
+        if (upsertRecipientsError) {
+          throw new Error(upsertRecipientsError.message);
+        }
+      }
+
+      const currentRecipientIds = new Set(existingRecipients.map(r => r.id));
+      const nextRecipientIds = new Set(validatedData.recipients.map(r => r.id));
+      const removedRecipientIds = [...currentRecipientIds].filter(id => !nextRecipientIds.has(id));
+
+      if (removedRecipientIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('recipients')
+          .delete()
+          .in('id', removedRecipientIds);
+
+        if (deleteError) {
+          throw new Error(deleteError.message);
+        }
+      }
+
+      const project = await fetchProjectWithRecipients(existingProjectId);
+      if (!project) {
+        throw new Error('Project not found');
+      }
+
+      revalidatePath('/');
+      return project;
+    }
+
+    const { data: insertedProject, error: insertProjectError } = await supabase
+      .from('projects')
+      .insert({
+        project_name: validatedData.projectName,
+        client_name: validatedData.clientName,
+        status: 'rascunho',
+      })
+      .select('id')
+      .single();
+
+    if (insertProjectError || !insertedProject) {
+      throw new Error(insertProjectError?.message ?? 'Projeto não criado');
+    }
+
+    const projectId = insertedProject.id as string;
+
+    const recipientPayload = validatedData.recipients.map(recipient => ({
+      id: recipient.id,
+      project_id: projectId,
+      name: recipient.name,
+      position: recipient.position,
+      email: recipient.email,
+      status: recipient.status ?? 'pendente',
+      questions:
+        Array.isArray(recipient.questions) && recipient.questions.length > 0
+          ? sanitizeQuestions(recipient.questions)
+          : allQuestionIds,
+    }));
+
+    if (recipientPayload.length > 0) {
+      const { error: insertRecipientsError } = await supabase
+        .from('recipients')
+        .insert(recipientPayload);
+
+      if (insertRecipientsError) {
+        throw new Error(insertRecipientsError.message);
+      }
+    }
+
+    const project = await fetchProjectWithRecipients(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
     revalidatePath('/');
-    return MOCK_DB.projects[projectIndex];
-  } else {
-    const newProject: Project = {
-      id: uuidv4(),
-      ...validatedData,
-      recipients: validatedData.recipients.map(r => ({ ...r, questions: allQuestionIds, status: 'pendente' })),
-      status: 'rascunho',
-    };
-    MOCK_DB.projects.push(newProject);
-    revalidatePath('/');
-    return newProject;
+    return project;
+  } catch (error) {
+    console.error('Failed to save project:', error);
+    throw new Error('Não foi possível salvar o projeto.');
   }
 }
 
-export async function updateProjectQuestions(projectId: string, recipientId: string, questions: string[]) {
-  const project = MOCK_DB.projects.find(p => p.id === projectId);
-  if (!project) throw new Error('Project not found');
+export async function updateProjectQuestions(projectId: string, recipientId: string, questions: string[]): Promise<Project> {
+  const supabase = supabaseServer();
+  const sanitizedQuestions = sanitizeQuestions(questions);
 
-  const recipient = project.recipients.find(r => r.id === recipientId);
-  if (!recipient) throw new Error('Recipient not found');
+  try {
+    const { error } = await supabase
+      .from('recipients')
+      .update({ questions: sanitizedQuestions })
+      .eq('project_id', projectId)
+      .eq('id', recipientId);
 
-  recipient.questions = questions;
+    if (error) {
+      throw new Error(error.message);
+    }
 
-  revalidatePath('/');
-  return project;
+    const project = await fetchProjectWithRecipients(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    revalidatePath('/');
+    return project;
+  } catch (error) {
+    console.error('Failed to update project questions:', error);
+    throw new Error('Não foi possível atualizar as perguntas.');
+  }
 }
 
-export async function markSingleEmailAsSent(projectId: string, recipientId: string) {
-    const project = MOCK_DB.projects.find(p => p.id === projectId);
-    if (!project) throw new Error('Project not found');
+export async function markSingleEmailAsSent(projectId: string, recipientId: string): Promise<Project> {
+  const supabase = supabaseServer();
 
-    const recipient = project.recipients.find(r => r.id === recipientId);
-    if (!recipient) throw new Error('Recipient not found');
+  try {
+    const recipient = await fetchRecipientById(projectId, recipientId);
+    if (!recipient) {
+      throw new Error('Recipient not found');
+    }
 
-    if (recipient.questions.length > 0) {
-        recipient.status = 'enviado';
+    const hasQuestions = sanitizeQuestions(recipient.questions).length > 0;
+
+    if (hasQuestions) {
+      const { error: updateRecipientError } = await supabase
+        .from('recipients')
+        .update({ status: 'enviado' })
+        .eq('project_id', projectId)
+        .eq('id', recipientId);
+
+      if (updateRecipientError) {
+        throw new Error(updateRecipientError.message);
+      }
+    }
+
+    let project = await fetchProjectWithRecipients(projectId);
+    if (!project) {
+      throw new Error('Project not found');
     }
 
     const hasSentEmails = project.recipients.some(r => r.status === 'enviado' || r.status === 'concluido');
+
     if (hasSentEmails && project.status === 'rascunho') {
-        project.status = 'em_andamento';
+      const { error: updateProjectError } = await supabase
+        .from('projects')
+        .update({ status: 'em_andamento' })
+        .eq('id', projectId);
+
+      if (updateProjectError) {
+        throw new Error(updateProjectError.message);
+      }
+
+      project = await fetchProjectWithRecipients(projectId);
+      if (!project) {
+        throw new Error('Project not found after status update');
+      }
     }
-    
+
     revalidatePath('/');
     return project;
+  } catch (error) {
+    console.error('Failed to mark email as sent:', error);
+    throw new Error('Não foi possível marcar o e-mail como enviado.');
+  }
 }
 
-
 export async function submitResponse(submission: Submission) {
-  const project = MOCK_DB.projects.find(p => p.id === submission.projectId);
-  if (!project) throw new Error('Project not found');
+  const supabase = supabaseServer();
 
-  const submissionKey = `${submission.projectId}_${submission.recipientId}`;
-  MOCK_DB.submissions[submissionKey] = submission;
+  try {
+    const { data: existingSubmission, error: fetchSubmissionError } = await supabase
+      .from('submissions')
+      .select('id')
+      .eq('project_id', submission.projectId)
+      .eq('recipient_id', submission.recipientId)
+      .maybeSingle();
 
-  const recipient = project.recipients.find(r => r.id === submission.recipientId);
-  if (recipient) {
-    recipient.status = 'concluido';
-  }
-
-  const allCompleted = project.recipients.every(r => r.status === 'concluido' || r.questions.length === 0);
-
-  if (allCompleted) {
-    project.status = 'concluido';
-    const recipientEmails = project.recipients.map(r => r.email);
-    const responses = recipientEmails.reduce((acc, email) => {
-        const recip = project.recipients.find(r => r.email === email);
-        const sub = recip ? MOCK_DB.submissions[`${project.id}_${recip.id}`] : undefined;
-        const subAnswers = sub?.answers as Answer[] | undefined;
-        acc[email] = subAnswers?.reduce((ansAcc, ans) => {
-            ansAcc[ans.questionId] = ans.textAnswer || ans.fileAnswer || 'Não respondido';
-            return ansAcc;
-        }, {} as Record<string, any>) || 'Nenhuma submissão';
-        return acc;
-    }, {} as Record<string, any>);
-
-    try {
-      const notification = await formCompletionNotification({
-        projectName: project.projectName,
-        clientName: project.clientName,
-        recipientEmails: recipientEmails,
-        responses: responses,
-      });
-
-      project.notification = {
-        message: notification.notificationMessage,
-        isComprehensive: notification.isComprehensive,
-      };
-
-    } catch (error) {
-      console.error('Error generating AI notification:', error);
-      project.notification = {
-        message: 'Falha ao gerar a análise de completude das respostas.',
-        isComprehensive: false,
-      };
+    if (fetchSubmissionError) {
+      throw new Error(fetchSubmissionError.message);
     }
-  }
 
-  revalidatePath('/');
-  return { success: true, project };
+    if (existingSubmission) {
+      const { error: updateSubmissionError } = await supabase
+        .from('submissions')
+        .update({ answers: submission.answers })
+        .eq('id', existingSubmission.id);
+
+      if (updateSubmissionError) {
+        throw new Error(updateSubmissionError.message);
+      }
+    } else {
+      const { error: insertSubmissionError } = await supabase
+        .from('submissions')
+        .insert({
+          project_id: submission.projectId,
+          recipient_id: submission.recipientId,
+          answers: submission.answers,
+        });
+
+      if (insertSubmissionError) {
+        throw new Error(insertSubmissionError.message);
+      }
+    }
+
+    const { error: updateRecipientError } = await supabase
+      .from('recipients')
+      .update({ status: 'concluido' })
+      .eq('project_id', submission.projectId)
+      .eq('id', submission.recipientId);
+
+    if (updateRecipientError) {
+      throw new Error(updateRecipientError.message);
+    }
+
+    let project = await fetchProjectWithRecipients(submission.projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    const submissionRows = await fetchSubmissionsByProjectId(submission.projectId);
+
+    const allCompleted = project.recipients.every(recipient => {
+      const questions = Array.isArray(recipient.questions)
+        ? (recipient.questions as string[])
+        : sanitizeQuestions(recipient.questions);
+      return recipient.status === 'concluido' || questions.length === 0;
+    });
+
+    if (allCompleted) {
+      const submissionsByRecipient = new Map<string, Answer[]>();
+      for (const row of submissionRows) {
+        submissionsByRecipient.set(row.recipient_id, normalizeAnswerArray(row.answers));
+      }
+
+      const responses = project.recipients.reduce<Record<string, unknown>>((acc, recipient) => {
+        const answersForRecipient = submissionsByRecipient.get(recipient.id) ?? [];
+        if (answersForRecipient.length > 0) {
+          acc[recipient.email] = answersForRecipient.reduce<Record<string, unknown>>((answerAcc, answer) => {
+            if (answer.questionId) {
+              answerAcc[answer.questionId] = answer.textAnswer ?? answer.fileAnswer ?? 'Não respondido';
+            }
+            return answerAcc;
+          }, {});
+        } else {
+          acc[recipient.email] = 'Nenhuma submissão';
+        }
+        return acc;
+      }, {});
+
+      let notificationPayload: { message: string; isComprehensive: boolean };
+
+      try {
+        const notification = await formCompletionNotification({
+          projectName: project.projectName,
+          clientName: project.clientName,
+          recipientEmails: project.recipients.map(r => r.email),
+          responses,
+        });
+
+        notificationPayload = {
+          message: notification.notificationMessage,
+          isComprehensive: notification.isComprehensive,
+        };
+      } catch (notificationError) {
+        console.error('Error generating AI notification:', notificationError);
+        notificationPayload = {
+          message: 'Falha ao gerar a análise de completude das respostas.',
+          isComprehensive: false,
+        };
+      }
+
+      const { error: updateProjectError } = await supabase
+        .from('projects')
+        .update({
+          status: 'concluido',
+          notification: notificationPayload,
+        })
+        .eq('id', submission.projectId);
+
+      if (updateProjectError) {
+        throw new Error(updateProjectError.message);
+      }
+
+      project = await fetchProjectWithRecipients(submission.projectId);
+      if (!project) {
+        throw new Error('Project not found after finalization');
+      }
+    }
+
+    revalidatePath('/');
+    return { success: true, project };
+  } catch (error) {
+    console.error('Failed to submit response:', error);
+    throw new Error('Não foi possível enviar suas respostas.');
+  }
 }
 
 export async function getSubmissions(projectId: string): Promise<Record<string, Submission>> {
-  const projectSubmissions: Record<string, Submission> = {};
-  for (const key in MOCK_DB.submissions) {
-    if (key.startsWith(`${projectId}_`)) {
-      projectSubmissions[key] = MOCK_DB.submissions[key];
-    }
+  try {
+    const rows = await fetchSubmissionsByProjectId(projectId);
+    return rows.reduce<Record<string, Submission>>((acc, row) => {
+      acc[`${row.project_id}_${row.recipient_id}`] = {
+        projectId: row.project_id,
+        recipientId: row.recipient_id,
+        answers: toJsonArray(row.answers),
+      };
+      return acc;
+    }, {});
+  } catch (error) {
+    console.error('Failed to fetch submissions:', error);
+    throw new Error('Não foi possível carregar as submissões.');
   }
-  return projectSubmissions;
 }
