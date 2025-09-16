@@ -1,10 +1,5 @@
 // utils/supabase/server.ts
 import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
-import type { ReadonlyRequestCookies } from "next/headers";
-// opcional: force server-only
-// import "server-only";
 
 // Tipar seu schema se tiver: type Database = ...;
 
@@ -24,46 +19,20 @@ const getServiceConfig = () => {
   return { url, serviceRoleKey };
 };
 
-type SupabaseCookieToSet = {
-  name: string;
-  value: string;
-  options?: {
-    domain?: string;
-    maxAge?: number;
-    expires?: string | number | Date;
-    path?: string;
-    sameSite?: "lax" | "strict" | "none";
-    secure?: boolean;
-    httpOnly?: boolean;
-  };
-};
-
-type SupabaseCookiesToSet = ReadonlyArray<SupabaseCookieToSet>;
-
-// Cliente para SSR/RSC, usando cookies do Next
-export const createSSRClient = (cookieStore: ReadonlyRequestCookies) => {
+// Cliente para SSR/RSC. Como não usamos helpers específicos de SSR,
+// garantimos que sessões não sejam persistidas automaticamente.
+export const createSSRClient = () => {
   const { url, anonKey } = getPublicConfig();
-  return createServerClient(/* <Database> */ url, anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet: SupabaseCookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        } catch {
-          // Chamado em Server Component (não pode setar cookie aqui). Use middleware p/ refresh de sessão.
-        }
-      },
+  return createSupabaseClient(/* <Database> */ url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
     },
   });
 };
 
 export const supabaseServer = async () => {
-  const cookieStore = await cookies();
-  return createSSRClient(cookieStore);
+  return createSSRClient();
 };
 
 // Cliente admin (service role) — use SOMENTE no backend (server actions, route handlers, jobs)
