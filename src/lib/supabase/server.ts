@@ -1,6 +1,6 @@
 // utils/supabase/server.ts
 import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 // opcional: force server-only
 // import "server-only";
@@ -31,7 +31,13 @@ export const createSSRClient = (cookieStore: ReturnType<typeof cookies>) => {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(
+        cookiesToSet: {
+          name: string;
+          value: string;
+          options: CookieOptions;
+        }[],
+      ) {
         try {
           cookiesToSet.forEach(({ name, value, options }) =>
             cookieStore.set(name, value, options)
