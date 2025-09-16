@@ -7,24 +7,6 @@ import RecipientView from "@/components/app/recipient-view";
 import type { Project } from "@/types";
 import { AppHeader } from "@/components/app/header";
 
-import { createClient } from '@/utils/supabase/server'
-import { cookies } from 'next/headers'
-
-export default async function Page() {
-  const cookieStore = await cookies()
-  const supabase = createClient(cookieStore)
-
-  const { data: todos } = await supabase.from('todos').select()
-
-  return (
-    <ul>
-      {todos?.map((todo) => (
-        <li>{todo}</li>
-      ))}
-    </ul>
-  )
-}
-
 export type ViewMode = "admin" | "recipient";
 
 function HomePageContent() {
