@@ -7,7 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { Project, Answer, Submission } from '@/lib/types';
+import type { Project, Submission } from '@/types';
+import type { Answer } from '@/lib/types';
 import { QUESTIONS } from '@/lib/questions';
 import { submitResponse } from '@/lib/actions';
 import { useToast } from "@/hooks/use-toast";
@@ -46,7 +47,7 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
       setAnswers({});
     }
 
-    setIsSubmitted(activeRecipient?.status === 'completed');
+    setIsSubmitted(activeRecipient?.status === 'concluido');
   }, [activeRecipientId, project.id, activeRecipient?.status, isRecipientSession]);
 
   useEffect(() => {
@@ -120,7 +121,7 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
         <div className="flex justify-center">
             <div className="w-full max-w-sm">
                 <Label>Pré-visualizar como:</Label>
-                <Select value={activeRecipientId} onValueChange={setActiveRecipientId}>
+                <Select value={activeRecipientId ?? undefined} onValueChange={setActiveRecipientId}>
                     <SelectTrigger><SelectValue placeholder="Selecione um destinatário..." /></SelectTrigger>
                     <SelectContent>
                     {project.recipients.map(r => (

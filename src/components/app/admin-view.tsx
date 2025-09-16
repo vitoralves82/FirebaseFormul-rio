@@ -13,12 +13,16 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent, getSubmissions } from '@/lib/actions';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
-import type { Project, Recipient, Submission, Answer } from '@/lib/types';
+import type { Project, Recipient, Submission } from '@/types';
+import type { Answer } from '@/lib/types';
 import { QUESTIONS } from '@/lib/questions';
 import { PlusCircle, Trash2, Send, Mail, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { groupBy } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+
+const getQuestionIds = (questions: Recipient['questions'] | undefined): string[] =>
+  Array.isArray(questions) ? questions.filter((value): value is string => typeof value === 'string') : [];
 
 interface AdminViewProps {
   project: Project | null;
@@ -34,15 +38,24 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
 
   const form = useForm<ProjectFormData>({
     resolver: zodResolver(projectSchema),
-    defaultValues: project ? {
-      projectName: project.projectName,
-      clientName: project.clientName,
-      recipients: project.recipients,
-    } : {
-      projectName: '',
-      clientName: '',
-      recipients: [{ id: uuidv4(), name: '', position: '', email: '' }],
-    },
+    defaultValues: project
+      ? {
+          projectName: project.projectName,
+          clientName: project.clientName,
+          recipients: project.recipients.map(({ id, name, position, email, status, questions }) => ({
+            id,
+            name,
+            position,
+            email,
+            status,
+            questions: getQuestionIds(questions),
+          })),
+        }
+      : {
+          projectName: '',
+          clientName: '',
+          recipients: [{ id: uuidv4(), name: '', position: '', email: '' }],
+        },
   });
 
   const { fields, append, remove } = useFieldArray({
@@ -85,11 +98,12 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
       if (!project) return;
       const recipient = project.recipients.find(r => r.id === recipientId);
       if (!recipient) return;
-      
+
+      const currentQuestions = getQuestionIds(recipient.questions);
       const newQuestions = checked
-        ? [...recipient.questions, questionId]
-        : recipient.questions.filter(id => id !== questionId);
-      
+        ? [...currentQuestions, questionId]
+        : currentQuestions.filter(id => id !== questionId);
+
       try {
         const updatedProject = await updateProjectQuestions(project.id, recipientId, newQuestions);
         onProjectChange(updatedProject);
@@ -132,7 +146,8 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
   const getAnswerForQuestion = (recipientId: string, questionId: string): Answer | undefined => {
     if (!project) return undefined;
     const submission = submissions[`${project.id}_${recipientId}`];
-    return submission?.answers.find(a => a.questionId === questionId);
+    const answers = submission?.answers as Answer[] | undefined;
+    return answers?.find(a => a.questionId === questionId);
   };
 
   const questionsByCategory = groupBy(QUESTIONS, 'category');
@@ -192,7 +207,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                         )}
                       </div>
                     ))}
-                    <Button type="button" variant="outline" onClick={() => append({ id: uuidv4(), name: '', position: '', email: '', questions: allQuestionIds, status: 'pending' })}>
+                    <Button type="button" variant="outline" onClick={() => append({ id: uuidv4(), name: '', position: '', email: '', questions: allQuestionIds, status: 'pendente' })}>
                       <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Destinatário
                     </Button>
                   </div>
@@ -214,16 +229,18 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
           </CardHeader>
           <CardContent className="space-y-6">
             <Accordion type="multiple" className="w-full">
-              {project?.recipients.map(recipient => (
-                <AccordionItem key={recipient.id} value={recipient.id}>
+              {project?.recipients.map(recipient => {
+                const questionIds = getQuestionIds(recipient.questions);
+                return (
+                  <AccordionItem key={recipient.id} value={recipient.id}>
                   <AccordionTrigger className="hover:no-underline">
                     <div className="flex flex-1 items-center gap-4">
                       <div className="flex flex-col text-left">
                         <span className="font-medium">{recipient.name}</span>
                         <span className="text-sm text-muted-foreground">{recipient.email}</span>
                       </div>
-                      {recipient.status === 'sent' && <Badge variant="outline"><Mail className="mr-2 h-3.5 w-3.5" />Enviado</Badge>}
-                      {recipient.status === 'completed' && <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200"><CheckCircle className="mr-2 h-3.5 w-3.5" />Concluído</Badge>}
+                      {recipient.status === 'enviado' && <Badge variant="outline"><Mail className="mr-2 h-3.5 w-3.5" />Enviado</Badge>}
+                      {recipient.status === 'concluido' && <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200"><CheckCircle className="mr-2 h-3.5 w-3.5" />Concluído</Badge>}
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="p-2">
@@ -233,16 +250,16 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-sm font-medium">Status:
-                                    {recipient.status === 'pending' && <span className="ml-2 font-normal text-muted-foreground">Pendente</span>}
-                                    {recipient.status === 'sent' && <span className="ml-2 font-normal text-amber-600">Enviado</span>}
-                                    {recipient.status === 'completed' && <span className="ml-2 font-normal text-green-600">Concluído</span>}
+                                    {recipient.status === 'pendente' && <span className="ml-2 font-normal text-muted-foreground">Pendente</span>}
+                                    {recipient.status === 'enviado' && <span className="ml-2 font-normal text-amber-600">Enviado</span>}
+                                    {recipient.status === 'concluido' && <span className="ml-2 font-normal text-green-600">Concluído</span>}
                                 </p>
                                 <p className="text-xs text-muted-foreground">O link do formulário será aberto no seu cliente de e-mail padrão.</p>
                             </div>
-                            <Button 
-                                size="sm" 
+                            <Button
+                                size="sm"
                                 onClick={() => handleSendEmail(recipient)}
-                                disabled={isPending || recipient.questions.length === 0 || recipient.status === 'completed'}
+                                disabled={isPending || questionIds.length === 0 || recipient.status === 'concluido'}
                             >
                                 <Send className="mr-2 h-4 w-4"/>
                                 Enviar E-mail
@@ -262,7 +279,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                                               <div key={question.id} className="flex items-start gap-3">
                                                   <Checkbox
                                                       id={`${recipient.id}-${question.id}`}
-                                                      checked={recipient.questions.includes(question.id)}
+                                                      checked={questionIds.includes(question.id)}
                                                       onCheckedChange={(checked) => handleQuestionChange(recipient.id, question.id, !!checked)}
                                                       className="mt-1"
                                                   />
@@ -278,8 +295,9 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                       </Accordion>
                     </div>
                   </AccordionContent>
-                </AccordionItem>
-              ))}
+                  </AccordionItem>
+                );
+              })}
             </Accordion>
           </CardContent>
         </Card>
@@ -294,23 +312,25 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
             {isPending && <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}
             {!isPending && (
                 <Accordion type="multiple" className="w-full">
-                {project?.recipients.map(recipient => (
-                    <AccordionItem key={recipient.id} value={recipient.id}>
+                {project?.recipients.map(recipient => {
+                    const questionIds = getQuestionIds(recipient.questions);
+                    return (
+                      <AccordionItem key={recipient.id} value={recipient.id}>
                     <AccordionTrigger className="hover:no-underline">
                         <div className="flex flex-1 items-center gap-4">
                         <div className="flex flex-col text-left">
                             <span className="font-medium">{recipient.name}</span>
                             <span className="text-sm text-muted-foreground">{recipient.email}</span>
                         </div>
-                        {recipient.status === 'pending' && <Badge variant="outline"><AlertCircle className="mr-2 h-3.5 w-3.5" />Pendente</Badge>}
-                        {recipient.status === 'sent' && <Badge variant="outline" className="text-amber-600 border-amber-300"><Mail className="mr-2 h-3.5 w-3.5" />Enviado</Badge>}
-                        {recipient.status === 'completed' && <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200"><CheckCircle className="mr-2 h-3.5 w-3.5" />Concluído</Badge>}
+                        {recipient.status === 'pendente' && <Badge variant="outline"><AlertCircle className="mr-2 h-3.5 w-3.5" />Pendente</Badge>}
+                        {recipient.status === 'enviado' && <Badge variant="outline" className="text-amber-600 border-amber-300"><Mail className="mr-2 h-3.5 w-3.5" />Enviado</Badge>}
+                        {recipient.status === 'concluido' && <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200"><CheckCircle className="mr-2 h-3.5 w-3.5" />Concluído</Badge>}
                         </div>
                     </AccordionTrigger>
                     <AccordionContent className="p-2">
                         <div className="space-y-4 pt-4">
-                        {recipient.questions.length > 0 ? (
-                           QUESTIONS.filter(q => recipient.questions.includes(q.id))
+                        {questionIds.length > 0 ? (
+                           QUESTIONS.filter(q => questionIds.includes(q.id))
                            .map(question => {
                                 const answer = getAnswerForQuestion(recipient.id, question.id);
                                 return (
@@ -329,8 +349,9 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                         )}
                         </div>
                     </AccordionContent>
-                    </AccordionItem>
-                ))}
+                      </AccordionItem>
+                    );
+                })}
                 </Accordion>
             )}
             </CardContent>

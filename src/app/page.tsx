@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from 'next/navigation';
 import AdminView from "@/components/app/admin-view";
 import RecipientView from "@/components/app/recipient-view";
-import type { Project } from "@/lib/types";
+import type { Project } from "@/types";
 import { AppHeader } from "@/components/app/header";
 
 export type ViewMode = "admin" | "recipient";

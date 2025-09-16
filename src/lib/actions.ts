@@ -3,7 +3,8 @@
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { formCompletionNotification } from '@/ai/flows/form-completion-notification';
-import type { Project, Submission } from '@/lib/types';
+import type { Project, Submission } from '@/types';
+import type { Answer } from '@/lib/types';
 import { revalidatePath } from 'next/cache';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import { QUESTIONS } from '@/lib/questions';
@@ -29,7 +30,9 @@ export async function createOrUpdateProject(data: ProjectFormData, existingProje
       ...validatedData,
       recipients: validatedData.recipients.map(newRecipient => {
         const existingRecipient = existingProject.recipients.find(r => r.id === newRecipient.id);
-        return existingRecipient ? { ...existingRecipient, ...newRecipient } : { ...newRecipient, questions: allQuestionIds, status: 'pending' };
+        return existingRecipient
+          ? { ...existingRecipient, ...newRecipient }
+          : { ...newRecipient, questions: allQuestionIds, status: 'pendente' };
       }),
     };
     revalidatePath('/');
@@ -38,8 +41,8 @@ export async function createOrUpdateProject(data: ProjectFormData, existingProje
     const newProject: Project = {
       id: uuidv4(),
       ...validatedData,
-      recipients: validatedData.recipients.map(r => ({ ...r, questions: allQuestionIds, status: 'pending' })),
-      status: 'draft',
+      recipients: validatedData.recipients.map(r => ({ ...r, questions: allQuestionIds, status: 'pendente' })),
+      status: 'rascunho',
     };
     MOCK_DB.projects.push(newProject);
     revalidatePath('/');
@@ -68,12 +71,12 @@ export async function markSingleEmailAsSent(projectId: string, recipientId: stri
     if (!recipient) throw new Error('Recipient not found');
 
     if (recipient.questions.length > 0) {
-        recipient.status = 'sent';
+        recipient.status = 'enviado';
     }
 
-    const hasSentEmails = project.recipients.some(r => r.status === 'sent' || r.status === 'completed');
-    if (hasSentEmails && project.status === 'draft') {
-        project.status = 'in-progress';
+    const hasSentEmails = project.recipients.some(r => r.status === 'enviado' || r.status === 'concluido');
+    if (hasSentEmails && project.status === 'rascunho') {
+        project.status = 'em_andamento';
     }
     
     revalidatePath('/');
@@ -90,18 +93,19 @@ export async function submitResponse(submission: Submission) {
 
   const recipient = project.recipients.find(r => r.id === submission.recipientId);
   if (recipient) {
-    recipient.status = 'completed';
+    recipient.status = 'concluido';
   }
 
-  const allCompleted = project.recipients.every(r => r.status === 'completed' || r.questions.length === 0);
+  const allCompleted = project.recipients.every(r => r.status === 'concluido' || r.questions.length === 0);
 
   if (allCompleted) {
-    project.status = 'completed';
+    project.status = 'concluido';
     const recipientEmails = project.recipients.map(r => r.email);
     const responses = recipientEmails.reduce((acc, email) => {
         const recip = project.recipients.find(r => r.email === email);
         const sub = recip ? MOCK_DB.submissions[`${project.id}_${recip.id}`] : undefined;
-        acc[email] = sub?.answers.reduce((ansAcc, ans) => {
+        const subAnswers = sub?.answers as Answer[] | undefined;
+        acc[email] = subAnswers?.reduce((ansAcc, ans) => {
             ansAcc[ans.questionId] = ans.textAnswer || ans.fileAnswer || 'Não respondido';
             return ansAcc;
         }, {} as Record<string, any>) || 'Nenhuma submissão';
