@@ -57,33 +57,19 @@ interface AdminViewProps {
   onProjectChange: (project: Project) => void;
 }
 
-/** Endpoints REST locais já existentes para atualizar perguntas e marcar email enviado */
-async function updateRecipientQuestionsViaApi(projectId: string, recipientId: string, questions: string[]) {
-  const response = await fetch('/api/recipients/questions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId, recipientId, questions }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.project) {
-    const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível atualizar as perguntas.';
-    throw new Error(message);
-  }
-  return payload.project as Project;
+/** ====== Versões LOCAIS (sem chamadas a /api) ====== */
+function updateRecipientQuestionsLocal(p: Project, recipientId: string, questions: string[]) {
+  const recipients = p.recipients.map(r =>
+    r.id === recipientId ? { ...r, questions } : r
+  );
+  return { ...p, recipients };
 }
 
-async function markRecipientEmailAsSentViaApi(projectId: string, recipientId: string) {
-  const response = await fetch('/api/recipients/mark-sent', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId, recipientId }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.project) {
-    const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível marcar o e-mail como enviado.';
-    throw new Error(message);
-  }
-  return payload.project as Project;
+function markRecipientEmailAsSentLocal(p: Project, recipientId: string) {
+  const recipients = p.recipients.map(r =>
+    r.id === recipientId ? { ...r, status: 'enviado' } : r
+  );
+  return { ...p, recipients };
 }
 
 /** Normaliza respostas JSON da tabela `respostas` (Supabase) para o tipo Answer[] do app */
@@ -168,7 +154,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
 
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'recipients' });
 
-  /** Persiste/atualiza o "projeto" no backend local da app (rota /api/projects) */
+  /** Persiste/atualiza o "projeto" na rota local /api/projects (stub) */
   const persistProject = async (formData: ProjectFormData) => {
     try {
       const response = await fetch('/api/projects', {
@@ -275,6 +261,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
 
   const handleQuestionChange = (recipientId: string, questionId: string, checked: boolean) => {
     if (!project) return;
+
     const recipient = project.recipients.find((r) => r.id === recipientId);
     if (!recipient) return;
 
@@ -283,46 +270,29 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
       ? [...currentQuestions, questionId]
       : currentQuestions.filter((id) => id !== questionId);
 
-    startTransition(() => {
-      void (async () => {
-        try {
-          const updatedProject = await updateRecipientQuestionsViaApi(project.id, recipientId, newQuestions);
-          onProjectChange(updatedProject);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Não foi possível atualizar as perguntas.';
-          toast({ title: 'Erro', description: message, variant: 'destructive' });
-        }
-      })();
-    });
+    // Atualiza localmente (sem /api) → evita 500
+    const updatedProject = updateRecipientQuestionsLocal(project, recipientId, newQuestions);
+    onProjectChange(updatedProject);
   };
 
   const handleSendEmail = (recipient: Recipient) => {
     if (!project) return;
-    startTransition(() => {
-      void (async () => {
-        try {
-          const updatedProject = await markRecipientEmailAsSentViaApi(project.id, recipient.id);
-          onProjectChange(updatedProject);
 
-          toast({
-            title: `E-mail para ${recipient.name} preparado!`,
-            description: 'Seu cliente de e-mail deve abrir em breve.',
-          });
+    // Atualiza status localmente (sem /api)
+    const updated = markRecipientEmailAsSentLocal(project, recipient.id);
+    onProjectChange(updated);
 
-          const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
-          const body =
-            `Olá ${recipient.name},\n\nVocê foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\n` +
-            `Por favor, acesse o link abaixo para responder às suas perguntas:\n${window.location.origin}?view=recipient&projectId=${project.id}&recipientId=${recipient.id}\n\nObrigado,\nEquipe EnvironPact`;
-          const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-          window.open(mailtoLink, '_blank');
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Não foi possível marcar o e-mail como enviado.';
-          toast({ title: 'Erro ao enviar e-mail', description: message, variant: 'destructive' });
-        }
-      })();
+    toast({
+      title: `E-mail para ${recipient.name} preparado!`,
+      description: 'Seu cliente de e-mail deve abrir em breve.',
     });
+
+    const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
+    const body =
+      `Olá ${recipient.name},\n\nVocê foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\n` +
+      `Por favor, acesse o link abaixo para responder às suas perguntas:\n${window.location.origin}?view=recipient&projectId=${project.id}&recipientId=${recipient.id}\n\nObrigado,\nEquipe EnvironPact`;
+    const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(mailtoLink, '_blank');
   };
 
   const getAnswerForQuestion = (recipientId: string, questionId: string): Answer | undefined => {
