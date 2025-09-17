@@ -12,9 +12,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { addDestinatarios, createProjeto, listRespostasPorProjeto, buildResponderLink, getDestinatarioTokenByEmail } from '@/lib/esgApi';
 
-
+import { addDestinatarios, createProjeto, listRespostasPorProjeto,
+         buildResponderLink, getDestinatarioTokenByEmail  } from '@/lib/esgApi';
 
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import type { Project, Recipient, Submission } from '@/types';
@@ -60,12 +60,16 @@ interface AdminViewProps {
 
 /** ====== Versões LOCAIS (sem chamadas a /api) ====== */
 function updateRecipientQuestionsLocal(p: Project, recipientId: string, questions: string[]) {
-  const recipients = p.recipients.map(r => (r.id === recipientId ? { ...r, questions } : r));
+  const recipients = p.recipients.map(r =>
+    r.id === recipientId ? { ...r, questions } : r
+  );
   return { ...p, recipients };
 }
 
 function markRecipientEmailAsSentLocal(p: Project, recipientId: string) {
-  const recipients = p.recipients.map(r => (r.id === recipientId ? { ...r, status: 'enviado' } : r));
+  const recipients = p.recipients.map(r =>
+    r.id === recipientId ? { ...r, status: 'enviado' } : r
+  );
   return { ...p, recipients };
 }
 
@@ -272,43 +276,25 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     onProjectChange(updatedProject);
   };
 
-  const handleSendEmail = async (recipient: Recipient) => {
+  const handleSendEmail = (recipient: Recipient) => {
     if (!project) return;
-    try {
-      // 1) pega o token do Supabase
-      const token = await getDestinatarioTokenByEmail(project.id, recipient.email);
-      if (!token) throw new Error('Token do destinatário não encontrado.');
 
-      // 2) atualiza status localmente (sem /api)
-      const updated = markRecipientEmailAsSentLocal(project, recipient.id);
-      onProjectChange(updated);
+    // Atualiza status localmente (sem /api)
+    const updated = markRecipientEmailAsSentLocal(project, recipient.id);
+    onProjectChange(updated);
 
-      // 3) monta link público por token
-      const link = buildResponderLink(token);
+    toast({
+      title: `E-mail para ${recipient.name} preparado!`,
+      description: 'Seu cliente de e-mail deve abrir em breve.',
+    });
 
-      toast({
-        title: `E-mail para ${recipient.name} preparado!`,
-        description: 'Seu cliente de e-mail deve abrir em breve.',
-      });
-
-      // 4) abre mailto no mesmo tab para evitar aba branca sobrando
-      const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
-      const body =
-        `Olá ${recipient.name},\n\n` +
-        `Você foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\n` +
-        `Acesse o link abaixo para responder às suas perguntas:\n${link}\n\n` +
-        `Obrigado,\nEquipe EnvironPact`;
-      const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      window.open(mailtoLink, '_self');
-    } catch (error: any) {
-      toast({
-        title: 'Erro ao preparar e-mail',
-        description: error?.message ?? 'Falha ao obter o token do destinatário.',
-        variant: 'destructive',
-      });
-    }
+    const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
+    const body =
+      `Olá ${recipient.name},\n\nVocê foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\n` +
+      `Por favor, acesse o link abaixo para responder às suas perguntas:\n${window.location.origin}?view=recipient&projectId=${project.id}&recipientId=${recipient.id}\n\nObrigado,\nEquipe EnvironPact`;
+    const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(mailtoLink, '_blank');
   };
-
 
   const getAnswerForQuestion = (recipientId: string, questionId: string): Answer | undefined => {
     if (!project) return undefined;

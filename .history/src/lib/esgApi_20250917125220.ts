@@ -53,18 +53,6 @@ export function buildResponderLink(token: string) {
   return `${baseUrl}/responder?token=${encodeURIComponent(token)}`;
 }
 
-export async function getDestinatarioTokenByEmail(projetoId: string, email: string) {
-  const { data, error } = await supabase
-    .from('destinatarios')
-    .select('token')
-    .eq('projeto_id', projetoId)
-    .eq('email', email)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data?.token ?? null;
-}
-
 /** ===== CRUD ===== */
 
 /** ADMIN: cria um projeto */
@@ -81,18 +69,6 @@ export async function createProjeto(input: ProjetoInput): Promise<Projeto> {
 
   if (error) throw new Error(error.message);
   return data as Projeto;
-}
-
-export async function getDestinatarioTokenByEmail(projetoId: string, email: string) {
-  const { data, error } = await supabase
-    .from('destinatarios')
-    .select('token')
-    .eq('projeto_id', projetoId)
-    .eq('email', email)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data?.token ?? null;
 }
 
 
