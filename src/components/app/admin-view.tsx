@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import { useState, useTransition, useEffect } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent, getSubmissions } from '@/lib/actions';
+import { addDestinatarios, createProjeto } from '@/lib/esgApi';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import type { Project, Recipient, Submission } from '@/types';
 import type { Answer } from '@/lib/types';
@@ -24,9 +24,80 @@ import { Badge } from '@/components/ui/badge';
 const getQuestionIds = (questions: Recipient['questions'] | undefined): string[] =>
   Array.isArray(questions) ? questions.filter((value): value is string => typeof value === 'string') : [];
 
+export function useSalvarProjetoHook() {
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvarProjetoEConvites({
+    nomeProjeto,
+    nomeCliente,
+    destinatariosLista,
+  }:{
+    nomeProjeto:string; nomeCliente:string;
+    destinatariosLista: {nome:string; cargo?:string; email:string;}[];
+  }) {
+    setSalvando(true);
+    try {
+      const projeto = await createProjeto({ nome_projeto: nomeProjeto, nome_cliente: nomeCliente });
+      await addDestinatarios(projeto.id, destinatariosLista);
+      return { ok: true, projetoId: projeto.id };
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return { salvando, salvarProjetoEConvites };
+}
+
 interface AdminViewProps {
   project: Project | null;
   onProjectChange: (project: Project) => void;
+}
+
+async function updateRecipientQuestionsViaApi(projectId: string, recipientId: string, questions: string[]) {
+  const response = await fetch('/api/recipients/questions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projectId, recipientId, questions }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.project) {
+    const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível atualizar as perguntas.';
+    throw new Error(message);
+  }
+
+  return payload.project as Project;
+}
+
+async function markRecipientEmailAsSentViaApi(projectId: string, recipientId: string) {
+  const response = await fetch('/api/recipients/mark-sent', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projectId, recipientId }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.project) {
+    const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível marcar o e-mail como enviado.';
+    throw new Error(message);
+  }
+
+  return payload.project as Project;
+}
+
+async function fetchSubmissionsMap(projectId: string) {
+  const response = await fetch(`/api/submissions?projectId=${encodeURIComponent(projectId)}`);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.submissions) {
+    const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível carregar as submissões.';
+    throw new Error(message);
+  }
+
+  return payload.submissions as Record<string, Submission>;
 }
 
 export default function AdminView({ project, onProjectChange }: AdminViewProps) {
@@ -34,6 +105,9 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState("definition");
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
+  const [supabaseProjetoId, setSupabaseProjetoId] = useState<string | null>(null);
+  const { salvando, salvarProjetoEConvites } = useSalvarProjetoHook();
+  const isSaving = isPending || salvando;
   const allQuestionIds = QUESTIONS.map(q => q.id);
 
   const form = useForm<ProjectFormData>({
@@ -62,84 +136,173 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     control: form.control,
     name: "recipients",
   });
-  
-  useEffect(() => {
-    if (activeTab === 'responses' && project) {
-      startTransition(async () => {
-        const fetchedSubmissions = await getSubmissions(project.id);
-        setSubmissions(fetchedSubmissions);
+
+  const persistProject = async (formData: ProjectFormData) => {
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ data: formData, projectId: project?.id ?? null }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.project) {
+        const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível salvar o projeto.';
+        throw new Error(message);
+      }
+
+      const result = payload.project as Project;
+      onProjectChange(result);
+
+      form.reset({
+        projectName: result.projectName,
+        clientName: result.clientName,
+        recipients: result.recipients.map(recipient => ({
+          id: recipient.id,
+          name: recipient.name,
+          position: recipient.position,
+          email: recipient.email,
+          status: recipient.status,
+          questions: getQuestionIds(recipient.questions),
+        })),
+      });
+
+      toast({
+        title: 'Projeto Salvo!',
+        description: 'As informações do projeto foram salvas com sucesso.',
+        variant: 'default',
+      });
+      setActiveTab('questions');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível salvar o projeto. Tente novamente.';
+      toast({
+        title: 'Erro ao Salvar',
+        description: message,
+        variant: 'destructive',
       });
     }
-  }, [activeTab, project]);
+  };
 
-  const onSubmit = (data: ProjectFormData) => {
-    startTransition(async () => {
+  useEffect(() => {
+    if (!project) {
+      setSupabaseProjetoId(null);
+    }
+  }, [project]);
+
+  useEffect(() => {
+    if (activeTab === 'responses' && project) {
+      startTransition(() => {
+        void (async () => {
+          try {
+            const fetchedSubmissions = await fetchSubmissionsMap(project.id);
+            setSubmissions(fetchedSubmissions);
+          } catch (error) {
+            if (process.env.NODE_ENV !== 'production') {
+              // eslint-disable-next-line no-console
+              console.error('Falha ao carregar submissões via API client', error);
+            }
+            toast({
+              title: 'Erro ao carregar respostas',
+              description: 'Não foi possível carregar as respostas dos destinatários.',
+              variant: 'destructive',
+            });
+          }
+        })();
+      });
+    }
+  }, [activeTab, project, toast]);
+
+  const onSubmit = async (data: ProjectFormData) => {
+    const destinatariosLista = data.recipients.map(recipient => ({
+      nome: recipient.name,
+      cargo: recipient.position,
+      email: recipient.email,
+    }));
+
+    if (!supabaseProjetoId) {
       try {
-        const result = await createOrUpdateProject(data, project?.id);
-        onProjectChange(result);
-        toast({
-          title: "Projeto Salvo!",
-          description: "As informações do projeto foram salvas com sucesso.",
-          variant: "default",
+        const resultado = await salvarProjetoEConvites({
+          nomeProjeto: data.projectName,
+          nomeCliente: data.clientName,
+          destinatariosLista,
         });
-        setActiveTab("questions");
+        setSupabaseProjetoId(resultado.projetoId);
+        toast({
+          title: 'Integração Supabase',
+          description: 'Projeto criado e destinatários salvos no Supabase.',
+        });
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'Falha ao integrar com Supabase.';
         toast({
-          title: "Erro ao Salvar",
-          description: "Não foi possível salvar o projeto. Tente novamente.",
-          variant: "destructive",
+          title: 'Integração Supabase',
+          description: message,
+          variant: 'destructive',
         });
+        return;
       }
+    }
+
+    startTransition(() => {
+      void persistProject(data);
     });
   };
 
   const handleQuestionChange = (recipientId: string, questionId: string, checked: boolean) => {
-    startTransition(async () => {
-      if (!project) return;
-      const recipient = project.recipients.find(r => r.id === recipientId);
-      if (!recipient) return;
+    if (!project) return;
+    const recipient = project.recipients.find(r => r.id === recipientId);
+    if (!recipient) return;
 
-      const currentQuestions = getQuestionIds(recipient.questions);
-      const newQuestions = checked
-        ? [...currentQuestions, questionId]
-        : currentQuestions.filter(id => id !== questionId);
+    const currentQuestions = getQuestionIds(recipient.questions);
+    const newQuestions = checked
+      ? [...currentQuestions, questionId]
+      : currentQuestions.filter(id => id !== questionId);
 
-      try {
-        const updatedProject = await updateProjectQuestions(project.id, recipientId, newQuestions);
-        onProjectChange(updatedProject);
-      } catch (error) {
-        toast({
-          title: "Erro",
-          description: "Não foi possível atualizar as perguntas.",
-          variant: "destructive",
-        });
-      }
+    startTransition(() => {
+      void (async () => {
+        try {
+          const updatedProject = await updateRecipientQuestionsViaApi(project.id, recipientId, newQuestions);
+          onProjectChange(updatedProject);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Não foi possível atualizar as perguntas.';
+          toast({
+            title: 'Erro',
+            description: message,
+            variant: 'destructive',
+          });
+        }
+      })();
     });
   };
 
   const handleSendEmail = (recipient: Recipient) => {
     if (!project) return;
-    startTransition(async () => {
-      try {
-        const updatedProject = await markSingleEmailAsSent(project.id, recipient.id);
-        onProjectChange(updatedProject);
-        
-        toast({
-          title: `E-mail para ${recipient.name} preparado!`,
-          description: "Seu cliente de e-mail deve abrir em breve.",
-        });
+    startTransition(() => {
+      void (async () => {
+        try {
+          const updatedProject = await markRecipientEmailAsSentViaApi(project.id, recipient.id);
+          onProjectChange(updatedProject);
 
-        const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
-        const body = `Olá ${recipient.name},\n\nVocê foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\nPor favor, acesse o link abaixo para responder às suas perguntas:\n${window.location.origin}?view=recipient&projectId=${project.id}&recipientId=${recipient.id}\n\nObrigado,\nEquipe EnvironPact`;
-        const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-        window.open(mailtoLink, '_blank');
-      } catch(e) {
-         toast({
-          title: "Erro ao enviar e-mail",
-          description: "Não foi possível marcar o e-mail como enviado.",
-          variant: "destructive",
-        });
-      }
+          toast({
+            title: `E-mail para ${recipient.name} preparado!`,
+            description: 'Seu cliente de e-mail deve abrir em breve.',
+          });
+
+          const subject = `Convite para preenchimento: Relatório ${project.projectName}`;
+          const body = `Olá ${recipient.name},\n\nVocê foi convidado(a) para preencher o formulário referente ao projeto "${project.projectName}".\n\nPor favor, acesse o link abaixo para responder às suas perguntas:\n${window.location.origin}?view=recipient&projectId=${project.id}&recipientId=${recipient.id}\n\nObrigado,\nEquipe EnvironPact`;
+          const mailtoLink = `mailto:${recipient.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+          window.open(mailtoLink, '_blank');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Não foi possível marcar o e-mail como enviado.';
+          toast({
+            title: 'Erro ao enviar e-mail',
+            description: message,
+            variant: 'destructive',
+          });
+        }
+      })();
     });
   };
 
@@ -212,8 +375,8 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
                     </Button>
                   </div>
                 </div>
-                <Button type="submit" disabled={isPending}>
-                  {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button type="submit" disabled={isSaving}>
+                  {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {project ? 'Atualizar Projeto' : 'Salvar e ir para Perguntas'}
                 </Button>
               </form>

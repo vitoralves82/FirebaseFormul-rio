@@ -57,6 +57,7 @@ Habilite o Row Level Security (RLS) e crie policies adequadas para acessos públ
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | URL do seu projeto Supabase. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Chave pública (anon) do Supabase utilizada no cliente. |
+| `NEXT_PUBLIC_APP_URL` | URL pública utilizada para montar links compartilháveis (ex.: convites). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Chave de service role usada pelas _server actions_ para mutações seguras. |
 | `NEXT_PUBLIC_SITE_URL` | URL pública da aplicação (utilizada em links gerados no app). |
 
