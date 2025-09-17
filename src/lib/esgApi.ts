@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabaseClient';
 
+/** ===== Tipos ===== */
 export type ProjetoInput = {
   nome_projeto: string;
   nome_cliente: string;
@@ -30,17 +31,18 @@ export type Destinatario = {
   respondido?: boolean | null;
 };
 
-export type RespostaPayload = Record<string, unknown>;
+export type RespostaPayload = Record<string, any>;
 
 export type Resposta = {
   id: string;
   projeto_id: string;
   destinatario_id?: string | null;
-  respostas_conteudo: unknown;
+  respostas_conteudo: any;
   validado: boolean;
   data_resposta?: string;
 };
 
+/** ===== Util ===== */
 const appUrl = process.env.NEXT_PUBLIC_APP_URL;
 
 export function buildResponderLink(token: string) {
@@ -51,6 +53,9 @@ export function buildResponderLink(token: string) {
   return `${baseUrl}/responder?token=${encodeURIComponent(token)}`;
 }
 
+/** ===== CRUD ===== */
+
+/** ADMIN: cria um projeto */
 export async function createProjeto(input: ProjetoInput): Promise<Projeto> {
   const { data, error } = await supabase
     .from('projetos')
@@ -66,8 +71,9 @@ export async function createProjeto(input: ProjetoInput): Promise<Projeto> {
   return data as Projeto;
 }
 
+/** ADMIN: adiciona destinatários e retorna lista + links */
 export async function addDestinatarios(projetoId: string, lista: NovoDestinatario[]) {
-  const payload = lista.map(d => ({
+  const payload = lista.map((d) => ({
     projeto_id: projetoId,
     nome: d.nome,
     cargo: d.cargo ?? null,
@@ -87,7 +93,7 @@ export async function addDestinatarios(projetoId: string, lista: NovoDestinatari
   if (error) throw new Error(error.message);
 
   const destinatarios = (data ?? []) as Destinatario[];
-  const links = destinatarios.map(d => ({
+  const links = destinatarios.map((d) => ({
     email: d.email,
     token: d.token,
     link: buildResponderLink(d.token),
@@ -96,6 +102,7 @@ export async function addDestinatarios(projetoId: string, lista: NovoDestinatari
   return { destinatarios, links };
 }
 
+/** RESPONDENTE: obtém destinatário via token (valida link) */
 export async function getDestinatarioByToken(token: string) {
   const { data, error } = await supabase
     .from('destinatarios')
@@ -105,9 +112,12 @@ export async function getDestinatarioByToken(token: string) {
 
   if (error) throw new Error(error.message);
 
-  return data as (Pick<Destinatario, 'id' | 'projeto_id' | 'nome' | 'email' | 'token' | 'respondido'> | null);
+  return data as
+    | Pick<Destinatario, 'id' | 'projeto_id' | 'nome' | 'email' | 'token' | 'respondido'>
+    | null;
 }
 
+/** RESPONDENTE: envia respostas (INSERT liberado para anon via policy) */
 export async function submitResposta(params: { token: string; respostas: RespostaPayload }) {
   const destinatario = await getDestinatarioByToken(params.token);
   if (!destinatario) throw new Error('Link inválido ou expirado.');
@@ -119,9 +129,11 @@ export async function submitResposta(params: { token: string; respostas: Respost
     validado: false,
   };
 
+  // Importante: não encadear .select() aqui, pois anon geralmente não tem SELECT
   const { error } = await supabase.from('respostas').insert(insertPayload);
   if (error) throw new Error(error.message);
 
+  // Opcional: marcar destinatário como respondido
   await supabase
     .from('destinatarios')
     .update({ respondido: true })
@@ -131,6 +143,7 @@ export async function submitResposta(params: { token: string; respostas: Respost
   return { ok: true };
 }
 
+/** ADMIN: lista respostas por projeto */
 export async function listRespostasPorProjeto(projetoId: string) {
   const { data, error } = await supabase
     .from('respostas')
@@ -142,6 +155,7 @@ export async function listRespostasPorProjeto(projetoId: string) {
   return (data ?? []) as Resposta[];
 }
 
+/** ADMIN: marca/atualiza validação */
 export async function validarResposta(respostaId: string, value = true) {
   const { error } = await supabase
     .from('respostas')
