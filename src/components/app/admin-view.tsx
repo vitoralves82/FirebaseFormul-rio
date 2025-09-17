@@ -12,6 +12,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent, getSubmissions } from '@/lib/actions';
+import { addDestinatarios, createProjeto, listRespostasPorProjeto, validarResposta } from '@/lib/esgApi';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import type { Project, Recipient, Submission } from '@/types';
 import type { Answer } from '@/lib/types';
@@ -62,12 +63,50 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     control: form.control,
     name: "recipients",
   });
-  
+
+  async function handleSalvarProjeto({
+    nomeProjeto,
+    nomeCliente,
+    destinatariosLista,
+  }: {
+    nomeProjeto: string;
+    nomeCliente: string;
+    destinatariosLista: Array<{ nome: string; cargo?: string; email: string }>;
+  }) {
+    const projetoCriado = await createProjeto({ nome_projeto: nomeProjeto, nome_cliente: nomeCliente });
+    const { links } = await addDestinatarios(projetoCriado.id, destinatariosLista);
+    return { projetoId: projetoCriado.id, links };
+  }
+
+  async function carregarRespostas(projetoId: string) {
+    return await listRespostasPorProjeto(projetoId);
+  }
+
+  async function marcarValidado(respostaId: string, valor = true) {
+    await validarResposta(respostaId, valor);
+  }
+
   useEffect(() => {
     if (activeTab === 'responses' && project) {
       startTransition(async () => {
         const fetchedSubmissions = await getSubmissions(project.id);
         setSubmissions(fetchedSubmissions);
+        try {
+          const respostasSupabase = await carregarRespostas(project.id);
+          if (process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.log('Respostas carregadas via cliente Supabase:', respostasSupabase);
+            if (respostasSupabase.length > 0) {
+              // eslint-disable-next-line no-console
+              console.log('Handler marcarValidado disponível para uso manual:', marcarValidado);
+            }
+          }
+        } catch (error) {
+          if (process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.error('Falha ao carregar respostas via cliente Supabase', error);
+          }
+        }
       });
     }
   }, [activeTab, project]);
@@ -77,6 +116,28 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
       try {
         const result = await createOrUpdateProject(data, project?.id);
         onProjectChange(result);
+        if (!project) {
+          try {
+            const supabaseResult = await handleSalvarProjeto({
+              nomeProjeto: data.projectName,
+              nomeCliente: data.clientName,
+              destinatariosLista: data.recipients.map(recipient => ({
+                nome: recipient.name,
+                cargo: recipient.position,
+                email: recipient.email,
+              })),
+            });
+            if (process.env.NODE_ENV !== 'production') {
+              // eslint-disable-next-line no-console
+              console.log('Links de convite gerados via Supabase client:', supabaseResult.links);
+            }
+          } catch (error) {
+            if (process.env.NODE_ENV !== 'production') {
+              // eslint-disable-next-line no-console
+              console.error('Falha ao sincronizar criação com Supabase client', error);
+            }
+          }
+        }
         toast({
           title: "Projeto Salvo!",
           description: "As informações do projeto foram salvas com sucesso.",
