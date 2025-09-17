@@ -11,7 +11,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { createOrUpdateProject, updateProjectQuestions, markSingleEmailAsSent, getSubmissions } from '@/lib/actions';
+import { updateProjectQuestions, markSingleEmailAsSent, getSubmissions } from '@/lib/actions';
+import { addDestinatarios, createProjeto, listRespostasPorProjeto, validarResposta } from '@/lib/esgApi';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import type { Project, Recipient, Submission } from '@/types';
 import type { Answer } from '@/lib/types';
@@ -34,6 +35,7 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState("definition");
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
+  const [supabaseProjetoId, setSupabaseProjetoId] = useState<string | null>(null);
   const allQuestionIds = QUESTIONS.map(q => q.id);
 
   const form = useForm<ProjectFormData>({
@@ -62,12 +64,61 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
     control: form.control,
     name: "recipients",
   });
-  
+
+  async function handleSalvarProjeto({
+    nomeProjeto,
+    nomeCliente,
+    destinatariosLista,
+  }: {
+    nomeProjeto: string;
+    nomeCliente: string;
+    destinatariosLista: Array<{ nome: string; cargo?: string; email: string }>;
+  }) {
+    if (supabaseProjetoId) {
+      return { projetoId: supabaseProjetoId, links: [] as Array<{ email: string; token: string; link: string }> };
+    }
+
+    const projetoCriado = await createProjeto({ nome_projeto: nomeProjeto, nome_cliente: nomeCliente });
+    const { links } = await addDestinatarios(projetoCriado.id, destinatariosLista);
+    setSupabaseProjetoId(projetoCriado.id);
+    return { projetoId: projetoCriado.id, links };
+  }
+
+  async function carregarRespostas(projetoId: string) {
+    return await listRespostasPorProjeto(projetoId);
+  }
+
+  async function marcarValidado(respostaId: string, valor = true) {
+    await validarResposta(respostaId, valor);
+  }
+
+  useEffect(() => {
+    if (!project) {
+      setSupabaseProjetoId(null);
+    }
+  }, [project]);
+
   useEffect(() => {
     if (activeTab === 'responses' && project) {
       startTransition(async () => {
         const fetchedSubmissions = await getSubmissions(project.id);
         setSubmissions(fetchedSubmissions);
+        try {
+          const respostasSupabase = await carregarRespostas(project.id);
+          if (process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.log('Respostas carregadas via cliente Supabase:', respostasSupabase);
+            if (respostasSupabase.length > 0) {
+              // eslint-disable-next-line no-console
+              console.log('Handler marcarValidado disponível para uso manual:', marcarValidado);
+            }
+          }
+        } catch (error) {
+          if (process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.error('Falha ao carregar respostas via cliente Supabase', error);
+          }
+        }
       });
     }
   }, [activeTab, project]);
@@ -75,8 +126,63 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
   const onSubmit = (data: ProjectFormData) => {
     startTransition(async () => {
       try {
-        const result = await createOrUpdateProject(data, project?.id);
+        const destinatariosLista = data.recipients.map(recipient => ({
+          nome: recipient.name,
+          cargo: recipient.position,
+          email: recipient.email,
+        }));
+
+        try {
+          const supabaseResult = await handleSalvarProjeto({
+            nomeProjeto: data.projectName,
+            nomeCliente: data.clientName,
+            destinatariosLista,
+          });
+          if (supabaseResult.links.length > 0 && process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.log('Links de convite gerados via Supabase client:', supabaseResult.links);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Falha ao integrar com Supabase.';
+          toast({
+            title: 'Integração Supabase',
+            description: message,
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        const response = await fetch('/api/projects', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ data, projectId: project?.id ?? null }),
+        });
+
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok || !payload?.project) {
+          const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível salvar o projeto.';
+          throw new Error(message);
+        }
+
+        const result = payload.project as Project;
         onProjectChange(result);
+
+        form.reset({
+          projectName: result.projectName,
+          clientName: result.clientName,
+          recipients: result.recipients.map(recipient => ({
+            id: recipient.id,
+            name: recipient.name,
+            position: recipient.position,
+            email: recipient.email,
+            status: recipient.status,
+            questions: getQuestionIds(recipient.questions),
+          })),
+        });
+
         toast({
           title: "Projeto Salvo!",
           description: "As informações do projeto foram salvas com sucesso.",
@@ -84,9 +190,10 @@ export default function AdminView({ project, onProjectChange }: AdminViewProps) 
         });
         setActiveTab("questions");
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'Não foi possível salvar o projeto. Tente novamente.';
         toast({
           title: "Erro ao Salvar",
-          description: "Não foi possível salvar o projeto. Tente novamente.",
+          description: message,
           variant: "destructive",
         });
       }
