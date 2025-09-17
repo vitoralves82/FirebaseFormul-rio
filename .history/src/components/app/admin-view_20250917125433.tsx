@@ -68,7 +68,7 @@ function updateRecipientQuestionsLocal(p: Project, recipientId: string, question
 
 function markRecipientEmailAsSentLocal(p: Project, recipientId: string) {
   const recipients = p.recipients.map(r =>
-    r.id === recipientId ? { ...r, status: 'enviado' as Recipient['status'] } : r
+    r.id === recipientId ? { ...r, status: 'enviado' } : r
   );
   return { ...p, recipients };
 }

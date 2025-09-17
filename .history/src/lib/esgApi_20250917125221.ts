@@ -71,17 +71,6 @@ export async function createProjeto(input: ProjetoInput): Promise<Projeto> {
   return data as Projeto;
 }
 
-export async function getDestinatarioTokenByEmail(projetoId: string, email: string) {
-  const { data, error } = await supabase
-    .from('destinatarios')
-    .select('token')
-    .eq('projeto_id', projetoId)
-    .eq('email', email)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data?.token ?? null;
-}
 
 
 /** ADMIN: adiciona destinatários e retorna lista + links */
