@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { getDestinatarioByToken, submitResposta } from '@/lib/esgApi';
 
@@ -14,11 +14,15 @@ export default function ResponderPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, any>>({ pergunta_1: '', pergunta_2: '' });
 
-  const onChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm(s => ({ ...s, [e.target.name]: e.target.value }));
+  const onChange = (e: ChangeEvent<HTMLInputElement>) =>
+    setForm((s) => ({ ...s, [e.target.name]: e.target.value }));
 
   useEffect(() => {
-    if (!token) { setErro('Link sem token.'); setLoading(false); return; }
+    if (!token) {
+      setErro('Link sem token.');
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
         const d = await getDestinatarioByToken(token);
@@ -32,7 +36,7 @@ export default function ResponderPage() {
     })();
   }, [token]);
 
-  const onSubmit = async (e: React.FormEvent) => {
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       await submitResposta({ token, respostas: form });
@@ -47,18 +51,4 @@ export default function ResponderPage() {
   if (erro) return <p style={{ color: 'crimson' }}>{erro}</p>;
 
   return (
-    <main style={{ maxWidth: 720, margin: '40px auto', padding: '0 16px' }}>
-      <h1>Responder Formulário</h1>
-      <p>Destinatário: <b>{dest?.nome}</b> ({dest?.email})</p>
-      <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12 }}>
-        <label>Pergunta 1
-          <input name="pergunta_1" value={form.pergunta_1} onChange={onChange} required />
-        </label>
-        <label>Pergunta 2
-          <input name="pergunta_2" value={form.pergunta_2} onChange={onChange} />
-        </label>
-        <button type="submit">Enviar respostas</button>
-      </form>
-    </main>
-  );
-}
+    <main style={{ maxWidth: 720, margin: '40px auto', padding: '0

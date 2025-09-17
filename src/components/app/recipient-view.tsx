@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import { useEffect, useState, useTransition, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { Project, Submission } from '@/types';
 import type { Answer } from '@/lib/types';
 import { QUESTIONS } from '@/lib/questions';
-import { submitResponse } from '@/lib/actions';
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Upload, Paperclip, X } from 'lucide-react';
 import { groupBy } from '@/lib/utils'; // Assuming you add this helper
@@ -72,30 +71,47 @@ export default function RecipientView({ project, activeRecipientId, setActiveRec
   const handleSubmit = () => {
     if (!activeRecipientId) return;
 
-    startTransition(async () => {
-      const submission: Submission = {
-        projectId: project.id,
-        recipientId: activeRecipientId,
-        answers: Object.values(answers),
-      };
+    startTransition(() => {
+      void (async () => {
+        const submission: Submission = {
+          projectId: project.id,
+          recipientId: activeRecipientId,
+          answers: Object.values(answers),
+        };
 
-      try {
-        await submitResponse(submission);
-        if (!isRecipientSession) {
+        try {
+          const response = await fetch('/api/submissions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ submission }),
+          });
+
+          const payload = await response.json().catch(() => null);
+
+          if (!response.ok || !payload?.success) {
+            const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível enviar suas respostas.';
+            throw new Error(message);
+          }
+
+          if (!isRecipientSession) {
             localStorage.removeItem(`submission_${project.id}_${activeRecipientId}`);
+          }
+          setIsSubmitted(true);
+          toast({
+            title: 'Formulário Enviado!',
+            description: 'Suas respostas foram enviadas com sucesso.',
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Não foi possível enviar suas respostas. Tente novamente.';
+          toast({
+            title: 'Erro no Envio',
+            description: message,
+            variant: 'destructive',
+          });
         }
-        setIsSubmitted(true);
-        toast({
-          title: "Formulário Enviado!",
-          description: "Suas respostas foram enviadas com sucesso.",
-        });
-      } catch (error) {
-        toast({
-          title: "Erro no Envio",
-          description: "Não foi possível enviar suas respostas. Tente novamente.",
-          variant: "destructive",
-        });
-      }
+      })();
     });
   };
   
