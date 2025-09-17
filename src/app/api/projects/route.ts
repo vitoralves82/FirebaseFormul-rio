@@ -1,27 +1,37 @@
+// src/app/api/projects/route.ts
 import { NextResponse } from 'next/server';
-import { createOrUpdateProject } from '@/lib/actions';
 import type { ProjectFormData } from '@/lib/schemas';
+import type { Project } from '@/types';
 
-interface UpsertProjectRequestBody {
-  data?: ProjectFormData;
-  projectId?: string | null;
-}
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const body = (await request.json()) as UpsertProjectRequestBody | null;
+    const { data, projectId } = (await req.json()) as {
+      data: ProjectFormData;
+      projectId?: string | null;
+    };
 
-    if (!body?.data) {
-      return NextResponse.json({ error: 'Payload inválido.' }, { status: 400 });
-    }
+    // Monta o objeto Project que a UI espera (sem tocar no DB aqui)
+    const project: Project = {
+      id: projectId ?? crypto.randomUUID(),
+      projectName: data.projectName,
+      clientName: data.clientName,
+      recipients: data.recipients.map((r) => ({
+        id: r.id,
+        name: r.name,
+        position: r.position,
+        email: r.email,
+        status: r.status ?? 'pendente',
+        questions: r.questions ?? [],
+      })),
+      status: 'rascunho',
+      notification: { message: '', isComprehensive: false },
+    };
 
-    const projectId = typeof body.projectId === 'string' && body.projectId.length > 0 ? body.projectId : undefined;
-    const project = await createOrUpdateProject(body.data, projectId);
-
-    return NextResponse.json({ project });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Não foi possível processar a requisição.';
-    console.error('Failed to persist project via API route:', error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ project }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || 'Não foi possível salvar o projeto.' },
+      { status: 400 }
+    );
   }
 }
