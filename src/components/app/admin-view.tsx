@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { addDestinatarios, createProjeto } from '@/lib/esgApi';
+import { addDestinatarios, createProjeto, listRespostasPorProjeto } from '@/lib/esgApi';
 import { projectSchema, type ProjectFormData } from '@/lib/schemas';
 import type { Project, Recipient, Submission } from '@/types';
 import type { Answer } from '@/lib/types';
@@ -89,15 +89,79 @@ async function markRecipientEmailAsSentViaApi(projectId: string, recipientId: st
   return payload.project as Project;
 }
 
-async function fetchSubmissionsMap(projectId: string) {
-  const response = await fetch(`/api/submissions?projectId=${encodeURIComponent(projectId)}`);
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.submissions) {
-    const message = typeof payload?.error === 'string' ? payload.error : 'Não foi possível carregar as submissões.';
-    throw new Error(message);
+const normalizeRespostasConteudo = (respostas: unknown): Answer[] => {
+  if (Array.isArray(respostas)) {
+    return respostas.flatMap(item => {
+      if (!item || typeof item !== 'object') {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const questionId = typeof record.questionId === 'string' ? record.questionId : undefined;
+      if (!questionId) {
+        return [];
+      }
+
+      const answer: Answer = { questionId };
+      if (typeof record.textAnswer === 'string') {
+        answer.textAnswer = record.textAnswer;
+      }
+      if (typeof record.fileAnswer === 'string') {
+        answer.fileAnswer = record.fileAnswer;
+      }
+      return [answer];
+    });
   }
 
-  return payload.submissions as Record<string, Submission>;
+  if (respostas && typeof respostas === 'object') {
+    return Object.entries(respostas as Record<string, unknown>).reduce<Answer[]>((acc, [questionId, value]) => {
+      if (typeof questionId !== 'string' || questionId.length === 0) {
+        return acc;
+      }
+
+      const answer: Answer = { questionId };
+
+      if (typeof value === 'string') {
+        answer.textAnswer = value;
+      } else if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        if (typeof record.textAnswer === 'string') {
+          answer.textAnswer = record.textAnswer;
+        }
+        if (typeof record.fileAnswer === 'string') {
+          answer.fileAnswer = record.fileAnswer;
+        }
+      } else if (value !== undefined && value !== null) {
+        answer.textAnswer = JSON.stringify(value);
+      }
+
+      acc.push(answer);
+      return acc;
+    }, []);
+  }
+
+  return [];
+};
+
+async function fetchSubmissionsMap(projectId: string) {
+  const respostas = await listRespostasPorProjeto(projectId);
+  const submissionsMap: Record<string, Submission> = {};
+
+  respostas.forEach(resposta => {
+    const destinatarioId = resposta.destinatario_id ?? undefined;
+    if (!destinatarioId) {
+      return;
+    }
+
+    const answers = normalizeRespostasConteudo(resposta.respostas_conteudo);
+    submissionsMap[`${resposta.projeto_id}_${destinatarioId}`] = {
+      projectId: resposta.projeto_id,
+      recipientId: destinatarioId,
+      answers: answers as unknown as Submission['answers'],
+    };
+  });
+
+  return submissionsMap;
 }
 
 export default function AdminView({ project, onProjectChange }: AdminViewProps) {
